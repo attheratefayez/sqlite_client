@@ -6,7 +6,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QAction
 
 from ui.syntax_highlight import SqlHighlighter
+from ui.results_view import ResultsView
 from core.database import DatabaseConnection
+from core.query_executor import QueryExecutor, QueryResult
 
 
 class SqlEditWidget(QPlainTextEdit):
@@ -36,6 +38,12 @@ class QueryTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._splitter = QSplitter(Qt.Orientation.Vertical)
+
+        editor_container = QWidget()
+        editor_layout = QVBoxLayout(editor_container)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+
         self.editor = SqlEditWidget()
         self.editor.execute_requested.connect(self._on_execute)
 
@@ -45,8 +53,16 @@ class QueryTab(QWidget):
         self._button_layout.addWidget(self._execute_btn)
         self._button_layout.addStretch()
 
-        layout.addLayout(self._button_layout)
-        layout.addWidget(self.editor)
+        editor_layout.addLayout(self._button_layout)
+        editor_layout.addWidget(self.editor)
+
+        self.results = ResultsView()
+
+        self._splitter.addWidget(editor_container)
+        self._splitter.addWidget(self.results)
+        self._splitter.setSizes([300, 400])
+
+        layout.addWidget(self._splitter)
 
     def _on_execute(self, sql: str = "") -> None:
         sql = sql or self.editor.toPlainText()
@@ -56,10 +72,17 @@ class QueryTab(QWidget):
     def _on_execute_clicked(self) -> None:
         self._on_execute()
 
+    def set_executor(self, executor: QueryExecutor) -> None:
+        self._executor = executor
+
+    def show_query_result(self, result: QueryResult) -> None:
+        self.results.show_result(result)
+
 
 class QueryEditorWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._executor: QueryExecutor | None = None
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
 
@@ -78,6 +101,12 @@ class QueryEditorWidget(QWidget):
         self._tab_counter = 0
         self.add_tab()
 
+    def set_database(self, db: DatabaseConnection | None) -> None:
+        if db is not None:
+            self._executor = QueryExecutor(db)
+        else:
+            self._executor = None
+
     def add_tab(self) -> QueryTab:
         self._tab_counter += 1
         tab = QueryTab()
@@ -95,4 +124,13 @@ class QueryEditorWidget(QWidget):
             self._tabs.removeTab(index)
 
     def _on_tab_execute(self, sql: str) -> None:
-        pass
+        if self._executor is None:
+            tab = self.current_tab()
+            if tab:
+                err = QueryResult(error="No database connection")
+                tab.show_query_result(err)
+            return
+        result = self._executor.execute(sql)
+        tab = self.current_tab()
+        if tab:
+            tab.show_query_result(result)
