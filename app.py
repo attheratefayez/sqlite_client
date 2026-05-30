@@ -1,22 +1,20 @@
 """Application entry point for the SQLite Client.
 
-Provides :func:`create_app` to initialise the QApplication with styles
-and :func:`run` as the main entry point.
+Provides :func:`create_app` to initialise the QApplication and
+:func:`run` as the main entry point. Theme is applied by the
+main window based on saved settings.
 """
 
 import sys
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
 from ui.main_window import MainWindow
-from resources.style import LIGHT_THEME
 
 
 def create_app() -> QApplication:
     """Create and configure the QApplication instance.
 
-    Sets the application name, organization name, and applies the
-    initial light theme stylesheet. Theme is later managed from the
-    main window.
+    Sets the application name and organization name.
+    The theme stylesheet is applied by the main window on startup.
 
     Returns:
         Configured QApplication instance.
@@ -24,7 +22,6 @@ def create_app() -> QApplication:
     app = QApplication(sys.argv)
     app.setApplicationName("SQLite Client")
     app.setOrganizationName("sqlite-client")
-    app.setStyleSheet(LIGHT_THEME)
     return app
 
 

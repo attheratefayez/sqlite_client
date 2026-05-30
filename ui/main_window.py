@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self._setup_menu()
         self._setup_ui()
         self._setup_status_bar()
+        self._apply_saved_theme()
 
     def _setup_menu(self):
         """Construct the menu bar with File and Help menus."""
@@ -94,7 +95,6 @@ class MainWindow(QMainWindow):
 
         self._query_editor = QueryEditorWidget()
         self._right_tabs.addTab(self._query_editor, "Query")
-        self._right_tabs.setTabsClosable(False)
 
         self._splitter.addWidget(self._right_tabs)
 
@@ -202,6 +202,14 @@ class MainWindow(QMainWindow):
         if w is self._query_editor:
             return
         self._right_tabs.removeTab(index)
+
+    def _apply_saved_theme(self) -> None:
+        """Apply the theme from saved settings at startup."""
+        dark = self._settings.value("dark_mode", False, type=bool)
+        self._dark_mode_action.setChecked(dark)
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(THEMES["dark" if dark else "light"])
 
     def _on_toggle_theme(self) -> None:
         """Toggle between light and dark theme."""
