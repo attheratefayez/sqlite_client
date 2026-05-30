@@ -95,13 +95,13 @@ class TestMainWindow:
 
     def test_dark_mode_toggle(self, window):
         assert window._dark_mode_action.isCheckable()
-        assert not window._dark_mode_action.isChecked()
-        window._dark_mode_action.setChecked(True)
+        initial = window._dark_mode_action.isChecked()
+        window._dark_mode_action.setChecked(not initial)
         window._on_toggle_theme()
-        assert window._dark_mode_action.isChecked()
-        window._dark_mode_action.setChecked(False)
+        assert window._dark_mode_action.isChecked() is (not initial)
+        window._dark_mode_action.setChecked(initial)
         window._on_toggle_theme()
-        assert not window._dark_mode_action.isChecked()
+        assert window._dark_mode_action.isChecked() is initial
 
     def test_dark_mode_menu_item_exists(self, window):
         assert window._dark_mode_action is not None

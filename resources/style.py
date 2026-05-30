@@ -4,7 +4,7 @@ Provides light and dark theme stylesheet strings.
 """
 
 LIGHT_THEME = """
-QMainWindow {
+QMainWindow, QDialog {
     background-color: #f5f5f5;
 }
 
@@ -58,6 +58,11 @@ QPushButton:pressed {
 QPushButton:disabled {
     background-color: #cccccc;
     color: #888888;
+}
+
+QDialogButtonBox QPushButton {
+    min-height: 24px;
+    padding: 4px 16px;
 }
 
 QLineEdit {
@@ -163,7 +168,7 @@ QListWidget::item:selected {
 """
 
 DARK_THEME = """
-QMainWindow {
+QMainWindow, QDialog {
     background-color: #1e1e1e;
 }
 
@@ -229,6 +234,11 @@ QPushButton:pressed {
 QPushButton:disabled {
     background-color: #333333;
     color: #666666;
+}
+
+QDialogButtonBox QPushButton {
+    min-height: 24px;
+    padding: 4px 16px;
 }
 
 QLineEdit {
