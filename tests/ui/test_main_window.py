@@ -1,12 +1,10 @@
 import pytest
 import tempfile
 import pathlib
-from PyQt6.QtCore import Qt
 from core.database import DatabaseConnection
 from ui.main_window import MainWindow
 from ui.query_editor import QueryEditorWidget
 from ui.schema_browser import SchemaBrowser
-from ui.data_browser import DataBrowser
 
 
 @pytest.fixture

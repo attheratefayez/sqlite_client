@@ -13,9 +13,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 
-RECENT_FILES_SETTINGS_KEY = "recent_databases"
-
-
 class ConnectionDialog(QDialog):
     """A modal dialog for selecting or creating a SQLite database.
 

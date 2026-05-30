@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QLabel, QSplitter, QTableView, QHeaderView, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QAction
+from PyQt6.QtGui import QFont
 
 from ui.syntax_highlight import SqlHighlighter
 from ui.results_view import ResultsView

@@ -4,8 +4,8 @@ Provides :class:`QueryResult` for encapsulating execution outcomes and
 :class:`QueryExecutor` for running SQL statements against a database.
 """
 
+import time
 from dataclasses import dataclass, field
-from typing import Any
 from core.database import DatabaseConnection
 
 
@@ -87,7 +87,6 @@ class QueryExecutor:
         Returns:
             A QueryResult with columns, rows, duration, and error state.
         """
-        import time
         result = QueryResult()
         result.is_select = is_select_statement(sql)
         try:
@@ -102,19 +101,4 @@ class QueryExecutor:
             result.error = str(e)
         return result
 
-    def execute_many(self, statements: list[str]) -> list[QueryResult]:
-        """Execute multiple SQL statements sequentially.
 
-        Empty or whitespace-only statements are skipped.
-
-        Args:
-            statements: List of SQL statement strings.
-
-        Returns:
-            List of QueryResult objects, one per non-empty statement.
-        """
-        results = []
-        for sql in statements:
-            if sql.strip():
-                results.append(self.execute(sql))
-        return results

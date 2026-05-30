@@ -1,7 +1,6 @@
 import pytest
 import tempfile
 import pathlib
-from PyQt6.QtCore import Qt
 from ui.connection_dialog import ConnectionDialog
 
 

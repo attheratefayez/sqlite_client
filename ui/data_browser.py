@@ -8,7 +8,7 @@ inline editing capabilities).
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QPushButton, QLabel, QSpinBox, QLineEdit, QCheckBox,
-    QMessageBox, QStyledItemDelegate,
+    QMessageBox,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -437,13 +437,4 @@ class DataBrowser(QWidget):
         dlg = ExportDialog(self._table_name, columns, rows, self)
         dlg.exec()
 
-    def _quote(self, name: str) -> str:
-        """Return a double-quoted identifier for use in SQL.
-
-        Args:
-            name: Identifier to quote.
-
-        Returns:
-            Double-quoted identifier string.
-        """
-        return f'"{name}"'
+    _quote = staticmethod(DatabaseConnection._quote)

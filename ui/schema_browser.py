@@ -4,7 +4,7 @@ Provides a :class:`SchemaBrowser` widget that displays tables and views
 in a tree structure, with column details shown as child items.
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from PyQt6.QtCore import pyqtSignal, Qt
 from core.database import DatabaseConnection
 

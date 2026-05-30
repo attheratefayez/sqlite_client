@@ -4,9 +4,11 @@ Provides the top-level :class:`MainWindow` with menu bar, schema browser,
 query editor, status bar, and data browser tab management.
 """
 
+import pathlib
+
 from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
-    QMenuBar, QStatusBar, QMessageBox, QWidget, QVBoxLayout, QLabel
+    QStatusBar, QMessageBox, QLabel
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_status_bar()
         self._apply_saved_theme()
+        self._load_last_database()
 
     def _setup_menu(self):
         """Construct the menu bar with File and Help menus."""
@@ -131,14 +134,15 @@ class MainWindow(QMainWindow):
         files.insert(0, path)
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
-    def _on_open_database(self):
-        """Show the connection dialog and open the selected database."""
-        dlg = ConnectionDialog(recent_files=self._recent_files(), parent=self)
-        if dlg.exec() != ConnectionDialog.DialogCode.Accepted:
-            return
-        path = dlg.selected_path
-        if not path:
-            return
+    def _connect_database(self, path: str) -> bool:
+        """Open a database and wire it into all UI components.
+
+        Args:
+            path: Path to the SQLite database file.
+
+        Returns:
+            True if the connection succeeded, False otherwise.
+        """
         try:
             self._db.close()
             self._db.connect(path)
@@ -146,9 +150,35 @@ class MainWindow(QMainWindow):
             self._query_editor.set_database(self._db)
             self._close_action.setEnabled(True)
             self._add_recent_file(path)
+            self._settings.setValue("last_database", path)
             self._status_label.setText(f"Connected: {self._db.path}")
+            return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open database:\n{e}")
+            return False
+
+    def _on_open_database(self):
+        """Show the connection dialog and open the selected database."""
+        dlg = ConnectionDialog(recent_files=self._recent_files(), parent=self)
+        if dlg.exec() != ConnectionDialog.DialogCode.Accepted:
+            return
+        path = dlg.selected_path
+        if path:
+            self._connect_database(path)
+
+    def _load_last_database(self) -> None:
+        """Reopen the database that was open when the app was last closed."""
+        path = self._settings.value("last_database", "")
+        if not path or not pathlib.Path(path).exists():
+            return
+        try:
+            self._db.connect(path)
+            self._schema_browser.set_database(self._db)
+            self._query_editor.set_database(self._db)
+            self._close_action.setEnabled(True)
+            self._status_label.setText(f"Connected: {self._db.path}")
+        except Exception:
+            pass
 
     def _on_close_database(self):
         """Close the current database and reset all UI components."""
@@ -203,21 +233,22 @@ class MainWindow(QMainWindow):
             return
         self._right_tabs.removeTab(index)
 
-    def _apply_saved_theme(self) -> None:
-        """Apply the theme from saved settings at startup."""
-        dark = self._settings.value("dark_mode", False, type=bool)
-        self._dark_mode_action.setChecked(dark)
+    def _set_theme(self, dark: bool) -> None:
+        """Apply the given theme without persisting or updating the action."""
         app = QApplication.instance()
         if app:
             app.setStyleSheet(THEMES["dark" if dark else "light"])
 
+    def _apply_saved_theme(self) -> None:
+        """Apply the theme from saved settings at startup."""
+        dark = self._settings.value("dark_mode", False, type=bool)
+        self._dark_mode_action.setChecked(dark)
+        self._set_theme(dark)
+
     def _on_toggle_theme(self) -> None:
         """Toggle between light and dark theme."""
         dark = self._dark_mode_action.isChecked()
-        theme = "dark" if dark else "light"
-        app = QApplication.instance()
-        if app:
-            app.setStyleSheet(THEMES[theme])
+        self._set_theme(dark)
         self._settings.setValue("dark_mode", dark)
 
     def _on_about(self):

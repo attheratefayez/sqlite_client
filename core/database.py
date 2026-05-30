@@ -69,18 +69,6 @@ class IndexInfo:
     columns: list[str]
 
 
-@dataclass
-class TableRowCount:
-    """Row count for a single database table.
-
-    Attributes:
-        table_name: Name of the table.
-        row_count: Number of rows in the table.
-    """
-    table_name: str
-    row_count: int
-
-
 class DatabaseError(Exception):
     """Exception raised for database connection or query errors."""
     pass
