@@ -6,3 +6,5 @@ wheels/
 *.egg-info
 .venv
 uv.lock
+test_db/
+.pytest_cache/
