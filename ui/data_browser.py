@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from core.database import DatabaseConnection, ColumnInfo
+from ui.export_dialog import ExportDialog
 
 
 class DataTableModel(QAbstractTableModel):
@@ -175,6 +176,10 @@ class DataBrowser(QWidget):
         self._add_row_btn.clicked.connect(self._add_row)
         bottom_bar.addWidget(self._add_row_btn)
 
+        self._export_btn = QPushButton("Export")
+        self._export_btn.clicked.connect(self._export_data)
+        bottom_bar.addWidget(self._export_btn)
+
         layout.addLayout(bottom_bar)
 
     def _load_page(self) -> None:
@@ -296,6 +301,12 @@ class DataBrowser(QWidget):
             self._db.commit()
         except Exception:
             pass
+
+    def _export_data(self) -> None:
+        columns = [c.name for c in self._columns]
+        rows = self._model.rows_data() if self._model else []
+        dlg = ExportDialog(self._table_name, columns, rows, self)
+        dlg.exec()
 
     def _quote(self, name: str) -> str:
         return f'"{name}"'
