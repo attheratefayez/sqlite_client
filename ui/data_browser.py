@@ -1,0 +1,301 @@
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
+    QPushButton, QLabel, QSpinBox, QLineEdit, QCheckBox,
+    QMessageBox, QStyledItemDelegate,
+)
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
+from PyQt6.QtGui import QColor
+
+from core.database import DatabaseConnection, ColumnInfo
+
+
+class DataTableModel(QAbstractTableModel):
+    data_changed = pyqtSignal(int, int)
+
+    def __init__(self, columns: list[ColumnInfo], rows: list[tuple], parent=None):
+        super().__init__(parent)
+        self._columns = columns
+        self._rows = rows
+        self._checked: set[int] = set()
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        return len(self._rows)
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return len(self._columns) + 1
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        col = index.column()
+        if col == 0:
+            if role == Qt.ItemDataRole.CheckStateRole:
+                return Qt.CheckState.Checked if index.row() in self._checked else Qt.CheckState.Unchecked
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            value = self._rows[index.row()][col - 1]
+            if value is None:
+                return "NULL"
+            return str(value)
+        if role == Qt.ItemDataRole.ForegroundRole:
+            value = self._rows[index.row()][col - 1]
+            if value is None:
+                return QColor("#808080")
+        return None
+
+    def setData(self, index: QModelIndex, value, role=Qt.ItemDataRole.EditRole) -> bool:
+        if not index.isValid():
+            return False
+        col = index.column()
+        if col == 0 and role == Qt.ItemDataRole.CheckStateRole:
+            row = index.row()
+            if value == Qt.CheckState.Checked.value:
+                self._checked.add(row)
+            else:
+                self._checked.discard(row)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
+            return True
+        if role == Qt.ItemDataRole.EditRole:
+            row = index.row()
+            col_idx = col - 1
+            self._rows[row] = list(self._rows[row])
+            self._rows[row][col_idx] = value
+            self._rows[row] = tuple(self._rows[row])
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+            self.data_changed.emit(row, col_idx)
+            return True
+        return False
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        if index.column() == 0:
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                if section == 0:
+                    return ""
+                return self._columns[section - 1].name
+            return str(section + 1)
+        return None
+
+    @property
+    def checked_rows(self) -> set[int]:
+        return self._checked
+
+    def select_all(self, checked: bool) -> None:
+        if checked:
+            self._checked = set(range(len(self._rows)))
+        else:
+            self._checked = set()
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._rows) - 1, 0)
+        self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.CheckStateRole])
+
+    def rows_data(self) -> list[tuple]:
+        return self._rows
+
+    def columns(self) -> list[ColumnInfo]:
+        return self._columns
+
+
+class DataBrowser(QWidget):
+    def __init__(self, db: DatabaseConnection, table_name: str, parent=None):
+        super().__init__(parent)
+        self._db = db
+        self._table_name = table_name
+        self._columns: list[ColumnInfo] = db.table_schema(table_name)
+        self._page = 0
+        self._page_size = 100
+        self._search: str = ""
+        self._total_count = db.table_row_count(table_name)
+
+        self._setup_ui()
+        self._load_page()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        top_bar = QHBoxLayout()
+        top_bar.addWidget(QLabel(f"<b>{self._table_name}</b>"))
+
+        self._page_prev = QPushButton("◀ Prev")
+        self._page_prev.clicked.connect(self._prev_page)
+        top_bar.addWidget(self._page_prev)
+
+        self._page_label = QLabel()
+        top_bar.addWidget(self._page_label)
+
+        self._page_next = QPushButton("Next ▶")
+        self._page_next.clicked.connect(self._next_page)
+        top_bar.addWidget(self._page_next)
+
+        top_bar.addWidget(QLabel("Page size:"))
+        self._page_size_spin = QSpinBox()
+        self._page_size_spin.setRange(10, 1000)
+        self._page_size_spin.setValue(self._page_size)
+        self._page_size_spin.setSingleStep(50)
+        self._page_size_spin.valueChanged.connect(self._on_page_size_changed)
+        top_bar.addWidget(self._page_size_spin)
+
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Search...")
+        self._search_input.returnPressed.connect(self._on_search)
+        top_bar.addWidget(self._search_input)
+
+        search_btn = QPushButton("Search")
+        search_btn.clicked.connect(self._on_search)
+        top_bar.addWidget(search_btn)
+
+        layout.addLayout(top_bar)
+
+        self._table_view = QTableView()
+        self._table_view.setAlternatingRowColors(True)
+        self._table_view.horizontalHeader().setStretchLastSection(True)
+        self._table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        layout.addWidget(self._table_view)
+
+        bottom_bar = QHBoxLayout()
+        self._select_all_cb = QCheckBox("Select All")
+        self._select_all_cb.stateChanged.connect(self._on_select_all)
+        bottom_bar.addWidget(self._select_all_cb)
+
+        self._delete_btn = QPushButton("Delete Selected")
+        self._delete_btn.clicked.connect(self._delete_selected)
+        bottom_bar.addWidget(self._delete_btn)
+
+        self._total_label = QLabel()
+        bottom_bar.addWidget(self._total_label)
+        bottom_bar.addStretch()
+
+        self._add_row_btn = QPushButton("+ Add Row")
+        self._add_row_btn.clicked.connect(self._add_row)
+        bottom_bar.addWidget(self._add_row_btn)
+
+        layout.addLayout(bottom_bar)
+
+    def _load_page(self) -> None:
+        offset = self._page * self._page_size
+        query = (
+            f"SELECT * FROM {self._quote(self._table_name)}"
+            f" LIMIT {self._page_size} OFFSET {offset}"
+        )
+        try:
+            _, rows = self._db.execute_with_results(query)
+        except Exception:
+            rows = []
+
+        self._model = DataTableModel(self._columns, rows)
+        self._model.data_changed.connect(self._on_row_edited)
+        self._table_view.setModel(self._model)
+
+        total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
+        self._page_label.setText(f"Page {self._page + 1} of {total_pages}")
+        self._total_label.setText(f"Total rows: {self._total_count}")
+
+    def _prev_page(self) -> None:
+        if self._page > 0:
+            self._page -= 1
+            self._load_page()
+
+    def _next_page(self) -> None:
+        total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
+        if self._page < total_pages - 1:
+            self._page += 1
+            self._load_page()
+
+    def _on_page_size_changed(self, value: int) -> None:
+        self._page_size = value
+        self._page = 0
+        self._load_page()
+
+    def _on_search(self) -> None:
+        self._search = self._search_input.text().strip()
+        if self._search:
+            clauses = []
+            for col in self._columns:
+                escaped = self._search.replace("'", "''")
+                clauses.append(
+                    f"{self._quote(col.name)} LIKE '%{escaped}%'"
+                )
+            where = " OR ".join(clauses)
+            try:
+                row = self._db.execute(f"SELECT COUNT(*) FROM {self._quote(self._table_name)} WHERE {where}")
+                self._total_count = row[0][0] if row else 0
+            except Exception:
+                self._total_count = 0
+        else:
+            self._total_count = self._db.table_row_count(self._table_name)
+        self._page = 0
+        self._load_page()
+
+    def _on_select_all(self, state: int) -> None:
+        if self._model:
+            self._model.select_all(state == Qt.CheckState.Checked.value)
+
+    def _delete_selected(self) -> None:
+        if not self._model or not self._model.checked_rows:
+            QMessageBox.information(self, "Delete", "No rows selected.")
+            return
+        rows = sorted(self._model.checked_rows, reverse=True)
+        pk_cols = [c for c in self._columns if c.primary_key]
+        if not pk_cols:
+            QMessageBox.warning(self, "Delete", "Table has no primary key.")
+            return
+        pk_name = pk_cols[0].name
+        pk_idx = pk_cols[0].cid
+        pk_values = [self._model.rows_data()[r][pk_idx] for r in rows]
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete {len(rows)} row(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for pk_val in pk_values:
+            self._db.execute(
+                f"DELETE FROM {self._quote(self._table_name)} WHERE {self._quote(pk_name)} = ?",
+                (pk_val,)
+            )
+        self._db.commit()
+        self._total_count = self._db.table_row_count(self._table_name)
+        self._load_page()
+
+    def _add_row(self) -> None:
+        cols = ", ".join(self._quote(c.name) for c in self._columns)
+        placeholders = ", ".join("?" for _ in self._columns)
+        values = [None for _ in self._columns]
+        try:
+            self._db.execute(
+                f"INSERT INTO {self._quote(self._table_name)} ({cols}) VALUES ({placeholders})",
+                tuple(values),
+            )
+            self._db.commit()
+            self._total_count = self._db.table_row_count(self._table_name)
+            self._load_page()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+
+    def _on_row_edited(self, row: int, col_idx: int) -> None:
+        pk_cols = [c for c in self._columns if c.primary_key]
+        if not pk_cols:
+            return
+        pk_name = pk_cols[0].name
+        pk_idx = pk_cols[0].cid
+        pk_val = self._model.rows_data()[row][pk_idx]
+        col_name = self._columns[col_idx].name
+        new_val = self._model.rows_data()[row][col_idx]
+        try:
+            self._db.execute(
+                f"UPDATE {self._quote(self._table_name)} SET {self._quote(col_name)} = ? WHERE {self._quote(pk_name)} = ?",
+                (new_val, pk_val),
+            )
+            self._db.commit()
+        except Exception:
+            pass
+
+    def _quote(self, name: str) -> str:
+        return f'"{name}"'

@@ -6,6 +6,7 @@ from core.database import DatabaseConnection
 from ui.main_window import MainWindow
 from ui.query_editor import QueryEditorWidget
 from ui.schema_browser import SchemaBrowser
+from ui.data_browser import DataBrowser
 
 
 @pytest.fixture
@@ -70,3 +71,24 @@ class TestMainWindow:
 
     def test_schema_browser_exists(self, window):
         assert isinstance(window._schema_browser, SchemaBrowser)
+
+    def test_right_tabs_has_query_tab(self, window):
+        assert window._right_tabs.count() >= 1
+
+    def test_open_data_browser_adds_tab(self, window, sample_db_path, qtbot):
+        window._db.connect(sample_db_path)
+        count = window._right_tabs.count()
+        window._open_data_browser("test")
+        assert window._right_tabs.count() == count + 1
+
+    def test_open_data_browser_reuses_tab(self, window, sample_db_path, qtbot):
+        window._db.connect(sample_db_path)
+        window._open_data_browser("test")
+        count = window._right_tabs.count()
+        window._open_data_browser("test")
+        assert window._right_tabs.count() == count
+
+    def test_right_tab_close_query_tab_blocked(self, window):
+        idx = window._right_tabs.indexOf(window._query_editor)
+        window._on_right_tab_close(idx)
+        assert window._right_tabs.indexOf(window._query_editor) >= 0

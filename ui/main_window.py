@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QSplitter, QTabWidget, QTreeWidgetItem,
-    QMenuBar, QMenu, QStatusBar, QMessageBox, QFileDialog, QWidget, QVBoxLayout, QLabel
+    QMainWindow, QSplitter, QTabWidget,
+    QMenuBar, QStatusBar, QMessageBox, QWidget, QVBoxLayout, QLabel
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction
@@ -9,6 +9,7 @@ from core.database import DatabaseConnection
 from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
 from ui.connection_dialog import ConnectionDialog
+from ui.data_browser import DataBrowser
 
 
 RECENT_FILES_MAX = 10
@@ -63,8 +64,15 @@ class MainWindow(QMainWindow):
         self._schema_browser.view_selected.connect(self._on_view_selected)
         self._splitter.addWidget(self._schema_browser)
 
+        self._right_tabs = QTabWidget()
+        self._right_tabs.setTabsClosable(True)
+        self._right_tabs.tabCloseRequested.connect(self._on_right_tab_close)
+
         self._query_editor = QueryEditorWidget()
-        self._splitter.addWidget(self._query_editor)
+        self._right_tabs.addTab(self._query_editor, "Query")
+        self._right_tabs.setTabsClosable(False)
+
+        self._splitter.addWidget(self._right_tabs)
 
         self._splitter.setSizes([250, 950])
         self._splitter.setStretchFactor(0, 0)
@@ -112,10 +120,27 @@ class MainWindow(QMainWindow):
         self._status_label.setText("No database open")
 
     def _on_table_selected(self, table_name: str) -> None:
-        pass
+        self._open_data_browser(table_name)
 
     def _on_view_selected(self, view_name: str) -> None:
-        pass
+        tab = self._query_editor.add_tab()
+        tab.editor.setPlainText(f"SELECT * FROM \"{view_name}\"\n")
+
+    def _open_data_browser(self, table_name: str) -> None:
+        for i in range(self._right_tabs.count()):
+            w = self._right_tabs.widget(i)
+            if hasattr(w, '_table_name') and w._table_name == table_name:
+                self._right_tabs.setCurrentIndex(i)
+                return
+        browser = DataBrowser(self._db, table_name)
+        idx = self._right_tabs.addTab(browser, table_name)
+        self._right_tabs.setCurrentIndex(idx)
+
+    def _on_right_tab_close(self, index: int) -> None:
+        w = self._right_tabs.widget(index)
+        if w is self._query_editor:
+            return
+        self._right_tabs.removeTab(index)
 
     def _on_about(self):
         QMessageBox.about(self, "About SQLite Client",

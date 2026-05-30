@@ -145,16 +145,16 @@ class DatabaseConnection:
         ).fetchone()
         return row[0] if row else 0
 
-    def execute(self, sql: str) -> list[tuple[str]]:
+    def execute(self, sql: str, params: tuple = ()) -> list[tuple[str]]:
         conn = self._require_connection()
-        cursor = conn.execute(sql)
+        cursor = conn.execute(sql, params)
         if cursor.description:
             return cursor.fetchall()
         return []
 
-    def execute_with_results(self, sql: str) -> tuple[list[str], list[tuple]]:
+    def execute_with_results(self, sql: str, params: tuple = ()) -> tuple[list[str], list[tuple]]:
         conn = self._require_connection()
-        cursor = conn.execute(sql)
+        cursor = conn.execute(sql, params)
         columns = [desc[0] for desc in cursor.description] if cursor.description else []
         rows = cursor.fetchall()
         return columns, rows
