@@ -5,7 +5,7 @@ query editor, status bar, and data browser tab management.
 """
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QSplitter, QTabWidget,
+    QMainWindow, QSplitter, QTabWidget, QApplication,
     QMenuBar, QStatusBar, QMessageBox, QWidget, QVBoxLayout, QLabel
 )
 from PyQt6.QtCore import Qt, QSettings
@@ -16,6 +16,7 @@ from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
 from ui.connection_dialog import ConnectionDialog
 from ui.data_browser import DataBrowser
+from resources.style import THEMES
 
 
 RECENT_FILES_MAX = 10
@@ -64,6 +65,13 @@ class MainWindow(QMainWindow):
         self._quit_action.setShortcut("Ctrl+Q")
         self._quit_action.triggered.connect(self.close)
         file_menu.addAction(self._quit_action)
+
+        view_menu = menubar.addMenu("&View")
+        self._dark_mode_action = QAction("&Dark Mode", self)
+        self._dark_mode_action.setCheckable(True)
+        self._dark_mode_action.setChecked(self._settings.value("dark_mode", False, type=bool))
+        self._dark_mode_action.triggered.connect(self._on_toggle_theme)
+        view_menu.addAction(self._dark_mode_action)
 
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -194,6 +202,15 @@ class MainWindow(QMainWindow):
         if w is self._query_editor:
             return
         self._right_tabs.removeTab(index)
+
+    def _on_toggle_theme(self) -> None:
+        """Toggle between light and dark theme."""
+        dark = self._dark_mode_action.isChecked()
+        theme = "dark" if dark else "light"
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(THEMES[theme])
+        self._settings.setValue("dark_mode", dark)
 
     def _on_about(self):
         """Show the About dialog."""

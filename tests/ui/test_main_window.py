@@ -92,3 +92,17 @@ class TestMainWindow:
         idx = window._right_tabs.indexOf(window._query_editor)
         window._on_right_tab_close(idx)
         assert window._right_tabs.indexOf(window._query_editor) >= 0
+
+    def test_dark_mode_toggle(self, window):
+        assert window._dark_mode_action.isCheckable()
+        assert not window._dark_mode_action.isChecked()
+        window._dark_mode_action.setChecked(True)
+        window._on_toggle_theme()
+        assert window._dark_mode_action.isChecked()
+        window._dark_mode_action.setChecked(False)
+        window._on_toggle_theme()
+        assert not window._dark_mode_action.isChecked()
+
+    def test_dark_mode_menu_item_exists(self, window):
+        assert window._dark_mode_action is not None
+        assert "Dark" in window._dark_mode_action.text()

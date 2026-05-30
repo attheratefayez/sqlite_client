@@ -8,14 +8,15 @@ import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from ui.main_window import MainWindow
-from resources.style import STYLESHEET
+from resources.style import LIGHT_THEME
 
 
 def create_app() -> QApplication:
     """Create and configure the QApplication instance.
 
     Sets the application name, organization name, and applies the
-    global stylesheet.
+    initial light theme stylesheet. Theme is later managed from the
+    main window.
 
     Returns:
         Configured QApplication instance.
@@ -23,7 +24,7 @@ def create_app() -> QApplication:
     app = QApplication(sys.argv)
     app.setApplicationName("SQLite Client")
     app.setOrganizationName("sqlite-client")
-    app.setStyleSheet(STYLESHEET)
+    app.setStyleSheet(LIGHT_THEME)
     return app
 
 

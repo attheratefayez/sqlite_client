@@ -1,10 +1,9 @@
-"""Application stylesheet for the SQLite Client.
+"""Application stylesheets for the SQLite Client.
 
-Defines the Qt stylesheet string :data:`STYLESHEET` used to theme the
-entire application.
+Provides light and dark theme stylesheet strings.
 """
 
-STYLESHEET = """
+LIGHT_THEME = """
 QMainWindow {
     background-color: #f5f5f5;
 }
@@ -35,6 +34,10 @@ QHeaderView::section {
     font-weight: bold;
 }
 
+QHeaderView::section:hover {
+    background-color: #d8d8d8;
+}
+
 QPushButton {
     background-color: #0078d4;
     color: #ffffff;
@@ -62,6 +65,7 @@ QLineEdit {
     border-radius: 4px;
     padding: 4px 8px;
     background-color: #ffffff;
+    color: #333333;
 }
 
 QLineEdit:focus {
@@ -73,6 +77,7 @@ QSpinBox {
     border-radius: 4px;
     padding: 4px;
     background-color: #ffffff;
+    color: #333333;
 }
 
 QTabWidget::pane {
@@ -87,6 +92,7 @@ QTabBar::tab {
     border-bottom: none;
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;
+    color: #333333;
 }
 
 QTabBar::tab:selected {
@@ -101,11 +107,13 @@ QTabBar::tab:hover:!selected {
 QStatusBar {
     background-color: #e8e8e8;
     border-top: 1px solid #d0d0d0;
+    color: #333333;
 }
 
 QMenuBar {
     background-color: #f5f5f5;
     border-bottom: 1px solid #d0d0d0;
+    color: #333333;
 }
 
 QMenuBar::item:selected {
@@ -116,6 +124,7 @@ QMenuBar::item:selected {
 QMenu {
     background-color: #ffffff;
     border: 1px solid #d0d0d0;
+    color: #333333;
 }
 
 QMenu::item:selected {
@@ -129,10 +138,248 @@ QLabel {
 
 QCheckBox {
     spacing: 6px;
+    color: #333333;
 }
 
 QSplitter::handle {
     background-color: #d0d0d0;
     width: 2px;
 }
+
+QListWidget {
+    background-color: #ffffff;
+    border: 1px solid #d0d0d0;
+    color: #333333;
+}
+
+QListWidget::item:hover {
+    background-color: #e8f0fe;
+}
+
+QListWidget::item:selected {
+    background-color: #0078d4;
+    color: #ffffff;
+}
 """
+
+DARK_THEME = """
+QMainWindow {
+    background-color: #1e1e1e;
+}
+
+QTreeWidget {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    alternate-background-color: #2d2d2d;
+    color: #cccccc;
+}
+
+QTreeWidget::item:hover {
+    background-color: #2a2d2e;
+}
+
+QTreeWidget::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QTableView {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    alternate-background-color: #2d2d2d;
+    selection-background-color: #094771;
+    selection-color: #ffffff;
+    gridline-color: #3c3c3c;
+    color: #cccccc;
+}
+
+QTableView::item:hover {
+    background-color: #2a2d2e;
+}
+
+QHeaderView::section {
+    background-color: #333333;
+    padding: 4px;
+    border: 1px solid #3c3c3c;
+    font-weight: bold;
+    color: #cccccc;
+}
+
+QHeaderView::section:hover {
+    background-color: #404040;
+}
+
+QPushButton {
+    background-color: #0e639c;
+    color: #ffffff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QPushButton:hover {
+    background-color: #1177bb;
+}
+
+QPushButton:pressed {
+    background-color: #094771;
+}
+
+QPushButton:disabled {
+    background-color: #333333;
+    color: #666666;
+}
+
+QLineEdit {
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 4px 8px;
+    background-color: #3c3c3c;
+    color: #cccccc;
+}
+
+QLineEdit:focus {
+    border-color: #0e639c;
+}
+
+QSpinBox {
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 4px;
+    background-color: #3c3c3c;
+    color: #cccccc;
+}
+
+QTabWidget::pane {
+    border: 1px solid #3c3c3c;
+    background-color: #252526;
+}
+
+QTabBar::tab {
+    background-color: #2d2d2d;
+    padding: 6px 16px;
+    border: 1px solid #3c3c3c;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    color: #999999;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    border-bottom-color: #1e1e1e;
+    color: #ffffff;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #383838;
+    color: #cccccc;
+}
+
+QStatusBar {
+    background-color: #007acc;
+    border-top: 1px solid #3c3c3c;
+    color: #ffffff;
+}
+
+QMenuBar {
+    background-color: #3c3c3c;
+    border-bottom: 1px solid #3c3c3c;
+    color: #cccccc;
+}
+
+QMenuBar::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QMenu {
+    background-color: #2d2d2d;
+    border: 1px solid #454545;
+    color: #cccccc;
+}
+
+QMenu::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QLabel {
+    color: #cccccc;
+}
+
+QCheckBox {
+    spacing: 6px;
+    color: #cccccc;
+}
+
+QSplitter::handle {
+    background-color: #3c3c3c;
+    width: 2px;
+}
+
+QListWidget {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    color: #cccccc;
+}
+
+QListWidget::item:hover {
+    background-color: #2a2d2e;
+}
+
+QListWidget::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QPlainTextEdit {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+QScrollBar:vertical {
+    background-color: #1e1e1e;
+    width: 12px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #424242;
+    border-radius: 4px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #555555;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #1e1e1e;
+    height: 12px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #424242;
+    border-radius: 4px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #555555;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+"""
+
+THEMES = {
+    "light": LIGHT_THEME,
+    "dark": DARK_THEME,
+}
