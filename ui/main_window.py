@@ -2,11 +2,16 @@ from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QTreeWidgetItem,
     QMenuBar, QMenu, QStatusBar, QMessageBox, QFileDialog, QWidget, QVBoxLayout, QLabel
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction
 
 from core.database import DatabaseConnection
 from ui.schema_browser import SchemaBrowser
+from ui.query_editor import QueryEditorWidget
+from ui.connection_dialog import ConnectionDialog
+
+
+RECENT_FILES_MAX = 10
 
 
 class MainWindow(QMainWindow):
@@ -16,6 +21,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SQLite Client")
         self.resize(1200, 800)
 
+        self._settings = QSettings("sqlite-client", "sqlite-client")
         self._setup_menu()
         self._setup_ui()
         self._setup_status_bar()
@@ -57,16 +63,12 @@ class MainWindow(QMainWindow):
         self._schema_browser.view_selected.connect(self._on_view_selected)
         self._splitter.addWidget(self._schema_browser)
 
-        self._tab_widget = QTabWidget()
-        self._tab_widget.setTabsClosable(True)
-        self._tab_widget.tabCloseRequested.connect(self._on_tab_close)
-        self._splitter.addWidget(self._tab_widget)
+        self._query_editor = QueryEditorWidget()
+        self._splitter.addWidget(self._query_editor)
 
         self._splitter.setSizes([250, 950])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-
-        self._show_welcome_tab()
 
     def _setup_status_bar(self):
         self._status_bar = QStatusBar()
@@ -74,25 +76,30 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("No database open")
         self._status_bar.addPermanentWidget(self._status_label)
 
-    def _show_welcome_tab(self):
-        welcome = QWidget()
-        layout = QVBoxLayout(welcome)
-        layout.addWidget(QLabel("Open a database to get started."))
-        self._tab_widget.addTab(welcome, "Welcome")
-        self._tab_widget.setTabsClosable(False)
-        self._tab_widget.tabCloseRequested.disconnect()
+    def _recent_files(self) -> list[str]:
+        return self._settings.value("recent_files", [])
+
+    def _add_recent_file(self, path: str) -> None:
+        files = self._recent_files()
+        if path in files:
+            files.remove(path)
+        files.insert(0, path)
+        self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
     def _on_open_database(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Database", "", "SQLite Database (*.db *.sqlite *.sqlite3);;All Files (*)"
-        )
+        dlg = ConnectionDialog(recent_files=self._recent_files(), parent=self)
+        if dlg.exec() != ConnectionDialog.DialogCode.Accepted:
+            return
+        path = dlg.selected_path
         if not path:
             return
         try:
             self._db.close()
             self._db.connect(path)
             self._schema_browser.set_database(self._db)
+            self._query_editor.set_database(self._db)
             self._close_action.setEnabled(True)
+            self._add_recent_file(path)
             self._status_label.setText(f"Connected: {self._db.path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open database:\n{e}")
@@ -100,6 +107,7 @@ class MainWindow(QMainWindow):
     def _on_close_database(self):
         self._db.close()
         self._schema_browser.set_database(None)
+        self._query_editor.set_database(None)
         self._close_action.setEnabled(False)
         self._status_label.setText("No database open")
 
@@ -110,10 +118,8 @@ class MainWindow(QMainWindow):
         pass
 
     def _on_about(self):
-        QMessageBox.about(self, "About SQLite Client", "SQLite Client v0.1.0\n\nA PyQt6-based SQLite database browser.")
-
-    def _on_tab_close(self, index: int) -> None:
-        self._tab_widget.removeTab(index)
+        QMessageBox.about(self, "About SQLite Client",
+                          "SQLite Client v0.1.0\n\nA PyQt6-based SQLite database browser.")
 
     def closeEvent(self, event):
         self._db.close()

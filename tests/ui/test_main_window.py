@@ -4,6 +4,8 @@ import pathlib
 from PyQt6.QtCore import Qt
 from core.database import DatabaseConnection
 from ui.main_window import MainWindow
+from ui.query_editor import QueryEditorWidget
+from ui.schema_browser import SchemaBrowser
 
 
 @pytest.fixture
@@ -37,9 +39,9 @@ class TestMainWindow:
         assert "No database open" in window._status_label.text()
 
     def test_open_database(self, window, qtbot, sample_db_path):
-        window._on_open_database = lambda: None
         window._db.connect(sample_db_path)
         window._schema_browser.set_database(window._db)
+        window._query_editor.set_database(window._db)
         window._close_action.setEnabled(True)
         window._status_label.setText(f"Connected: {window._db.path}")
 
@@ -63,8 +65,8 @@ class TestMainWindow:
         window.close()
         assert not window._db.is_connected
 
-    def test_tab_widget_exists(self, window):
-        assert window._tab_widget.count() >= 1
+    def test_query_editor_exists(self, window):
+        assert isinstance(window._query_editor, QueryEditorWidget)
 
     def test_schema_browser_exists(self, window):
-        assert window._schema_browser is not None
+        assert isinstance(window._schema_browser, SchemaBrowser)
