@@ -219,6 +219,7 @@ class DataBrowser(QWidget):
         self._search: str = ""
         self._total_count = db.table_row_count(table_name)
 
+        self._pending_edits: dict[tuple[Any, str], str] = {}
         self._setup_ui()
         self._load_page()
 
@@ -274,6 +275,11 @@ class DataBrowser(QWidget):
         self._delete_btn.clicked.connect(self._delete_selected)
         bottom_bar.addWidget(self._delete_btn)
 
+        self._commit_btn = QPushButton("Commit Changes")
+        self._commit_btn.setEnabled(False)
+        self._commit_btn.clicked.connect(self._commit_changes)
+        bottom_bar.addWidget(self._commit_btn)
+
         self._total_label = QLabel()
         bottom_bar.addWidget(self._total_label)
         bottom_bar.addStretch()
@@ -300,8 +306,10 @@ class DataBrowser(QWidget):
         except Exception:
             rows = []
 
+        self._pending_edits.clear()
+        self._commit_btn.setEnabled(False)
         self._model = DataTableModel(self._columns, rows)
-        self._model.data_changed.connect(self._on_row_edited)
+        self._model.data_changed.connect(self.record_edit)
         self._table_view.setModel(self._model)
 
         total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
@@ -310,14 +318,14 @@ class DataBrowser(QWidget):
 
     def _prev_page(self) -> None:
         """Navigate to the previous page."""
-        if self._page > 0:
+        if self._page > 0 and self._prompt_discard_or_abort():
             self._page -= 1
             self._load_page()
 
     def _next_page(self) -> None:
         """Navigate to the next page."""
         total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
-        if self._page < total_pages - 1:
+        if self._page < total_pages - 1 and self._prompt_discard_or_abort():
             self._page += 1
             self._load_page()
 
@@ -327,12 +335,15 @@ class DataBrowser(QWidget):
         Args:
             value: New page size.
         """
-        self._page_size = value
-        self._page = 0
-        self._load_page()
+        if self._prompt_discard_or_abort():
+            self._page_size = value
+            self._page = 0
+            self._load_page()
 
     def _on_search(self) -> None:
         """Perform a search across all columns and update the data view."""
+        if not self._prompt_discard_or_abort():
+            return
         self._search = self._search_input.text().strip()
         if self._search:
             clauses = []
@@ -366,6 +377,8 @@ class DataBrowser(QWidget):
         if not self._model or not self._model.checked_rows:
             QMessageBox.information(self, "Delete", "No rows selected.")
             return
+        if not self._prompt_discard_or_abort():
+            return
         rows = sorted(self._model.checked_rows, reverse=True)
         pk_cols = [c for c in self._columns if c.primary_key]
         if not pk_cols:
@@ -392,6 +405,8 @@ class DataBrowser(QWidget):
 
     def _add_row(self) -> None:
         """Insert a new row with all-NULL values into the table."""
+        if not self._prompt_discard_or_abort():
+            return
         cols = ", ".join(self._quote(c.name) for c in self._columns)
         placeholders = ", ".join("?" for _ in self._columns)
         values = [None for _ in self._columns]
@@ -406,8 +421,8 @@ class DataBrowser(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
 
-    def _on_row_edited(self, row: int, col_idx: int) -> None:
-        """Persist an inline cell edit to the database.
+    def record_edit(self, row: int, col_idx: int) -> None:
+        """Record a pending cell edit without persisting.
 
         Args:
             row: Row index in the model.
@@ -416,19 +431,57 @@ class DataBrowser(QWidget):
         pk_cols = [c for c in self._columns if c.primary_key]
         if not pk_cols:
             return
-        pk_name = pk_cols[0].name
         pk_idx = pk_cols[0].cid
         pk_val = self._model.rows_data()[row][pk_idx]
         col_name = self._columns[col_idx].name
         new_val = self._model.rows_data()[row][col_idx]
+        self._pending_edits[(pk_val, col_name)] = new_val
+        self._commit_btn.setEnabled(True)
+
+    def _commit_changes(self) -> None:
+        """Persist all pending edits to the database in a single transaction."""
+        if not self._pending_edits:
+            return
+        pk_cols = [c for c in self._columns if c.primary_key]
+        pk_name = pk_cols[0].name if pk_cols else None
+        if pk_name is None:
+            return
+        table = self._quote(self._table_name)
+        pk_q = self._quote(pk_name)
         try:
-            self._db.execute(
-                f"UPDATE {self._quote(self._table_name)} SET {self._quote(col_name)} = ? WHERE {self._quote(pk_name)} = ?",
-                (new_val, pk_val),
-            )
+            for (pk_val, col_name), new_val in list(self._pending_edits.items()):
+                self._db.execute(
+                    f"UPDATE {table} SET {self._quote(col_name)} = ? WHERE {pk_q} = ?",
+                    (new_val, pk_val),
+                )
             self._db.commit()
         except Exception:
             pass
+        self._discard_pending_edits()
+
+    def _discard_pending_edits(self) -> None:
+        """Clear pending edits and disable the commit button."""
+        self._pending_edits.clear()
+        self._commit_btn.setEnabled(False)
+
+    def _prompt_discard_or_abort(self) -> bool:
+        """Prompt the user to discard unsaved changes.
+
+        Returns:
+            True if it is safe to proceed (no edits or user chose discard),
+            False if the user chose to cancel.
+        """
+        if not self._pending_edits:
+            return True
+        reply = QMessageBox.question(
+            self, "Unsaved Changes",
+            "You have unsaved changes. Discard them?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        self._discard_pending_edits()
+        return True
 
     def _export_data(self) -> None:
         """Open the export dialog for the current page of data."""

@@ -1,6 +1,7 @@
 import pytest
 import tempfile
 import pathlib
+from PyQt6.QtCore import QSettings
 from core.database import DatabaseConnection
 from ui.main_window import MainWindow
 from ui.query_editor import QueryEditorWidget
@@ -25,10 +26,15 @@ def sample_db_path():
 
 @pytest.fixture
 def window(qtbot):
+    settings = QSettings("sqlite-client", "sqlite-client")
+    saved = {k: settings.value(k) for k in settings.allKeys()}
+    settings.clear()
     win = MainWindow()
     win.show()
     qtbot.addWidget(win)
-    return win
+    yield win
+    for k, v in saved.items():
+        settings.setValue(k, v)
 
 
 class TestMainWindow:

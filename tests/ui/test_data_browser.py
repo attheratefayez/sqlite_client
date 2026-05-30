@@ -127,3 +127,66 @@ class TestDataBrowser:
     def test_delete_selected_with_rows(self, browser, qtbot):
         browser._model.select_all(True)
         assert len(browser._model.checked_rows) == 3
+
+    def test_edit_stores_pending_not_committed(self, browser, qtbot):
+        browser.record_edit(0, 0)
+        assert len(browser._pending_edits) == 1
+        assert browser._commit_btn.isEnabled()
+
+        original = browser._db.execute("SELECT name FROM users WHERE id=1")[0][0]
+        assert original == "Alice"
+
+    def test_commit_persists_changes(self, browser, qtbot):
+        browser._model.setData(browser._model.index(0, 2), "AliceEdited", Qt.ItemDataRole.EditRole)
+        assert len(browser._pending_edits) == 1
+        browser._commit_changes()
+        assert len(browser._pending_edits) == 0
+        assert not browser._commit_btn.isEnabled()
+
+        current = browser._db.execute("SELECT name FROM users WHERE id=1")[0][0]
+        assert current == "AliceEdited"
+
+    def test_pending_cleared_on_page_load(self, browser, qtbot):
+        browser.record_edit(0, 0)
+        assert len(browser._pending_edits) == 1
+        browser._load_page()
+        assert len(browser._pending_edits) == 0
+        assert not browser._commit_btn.isEnabled()
+
+    def test_same_cell_replaces_pending(self, browser, qtbot):
+        browser._model.setData(browser._model.index(0, 2), "First", Qt.ItemDataRole.EditRole)
+        assert len(browser._pending_edits) == 1
+        assert list(browser._pending_edits.values())[0] == "First"
+
+        browser._model.setData(browser._model.index(0, 2), "Second", Qt.ItemDataRole.EditRole)
+        assert len(browser._pending_edits) == 1
+        assert list(browser._pending_edits.values())[0] == "Second"
+
+    def test_commit_empty_is_noop(self, browser, qtbot):
+        assert len(browser._pending_edits) == 0
+        browser._commit_changes()
+        assert len(browser._pending_edits) == 0
+
+    def test_discard_pending_edits(self, browser, qtbot):
+        browser.record_edit(0, 0)
+        assert len(browser._pending_edits) == 1
+        browser._discard_pending_edits()
+        assert len(browser._pending_edits) == 0
+        assert not browser._commit_btn.isEnabled()
+
+    def test_edit_without_pk_does_not_store(self, browser, qtbot, sample_db):
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        conn = DatabaseConnection()
+        conn.connect(tmp.name)
+        conn.execute_script("""
+            CREATE TABLE notes (content TEXT);
+            INSERT INTO notes VALUES ('hello');
+        """)
+        conn.commit()
+        b = DataBrowser(conn, "notes")
+        qtbot.addWidget(b)
+        b.record_edit(0, 0)
+        assert len(b._pending_edits) == 0
+        conn.close()
+        pathlib.Path(tmp.name).unlink(missing_ok=True)
