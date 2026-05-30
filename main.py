@@ -1,6 +1,7 @@
-def main():
-    print("Hello from sqlite-client!")
+"""Entry point for the SQLite Client application."""
+
+from app import run
 
 
 if __name__ == "__main__":
-    main()
+    run()

@@ -1,3 +1,10 @@
+"""SQL syntax highlighter for PyQt6 text widgets.
+
+Provides :class:`SqlHighlighter`, a QSyntaxHighlighter subclass that
+applies colour formatting for SQL keywords, string literals, numbers,
+and comments.
+"""
+
 from PyQt6.QtCore import QRegularExpression
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 
@@ -19,7 +26,19 @@ SQL_KEYWORDS = [
 
 
 class SqlHighlighter(QSyntaxHighlighter):
+    """SQL syntax highlighter for QPlainTextEdit and QTextEdit.
+
+    Highlights SQL keywords in blue bold, string literals in green,
+    numeric literals in red, and single-line comments (``--``) in
+    grey italic.
+    """
+
     def __init__(self, parent=None):
+        """Initialize the highlighter and set up formatting rules.
+
+        Args:
+            parent: Parent QTextDocument object.
+        """
         super().__init__(parent)
 
         keyword_format = QTextCharFormat()
@@ -58,6 +77,13 @@ class SqlHighlighter(QSyntaxHighlighter):
         )
 
     def highlightBlock(self, text: str) -> None:
+        """Apply formatting to a block of text.
+
+        Called internally by Qt for each text block in the document.
+
+        Args:
+            text: The text of the block to highlight.
+        """
         for pattern, fmt in self._rules:
             it = pattern.globalMatch(text)
             while it.hasNext():

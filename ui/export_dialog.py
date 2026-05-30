@@ -1,3 +1,9 @@
+"""Export dialog for saving query results to file.
+
+Provides :class:`ExportDialog` which lets the user choose between
+CSV, JSON, and SQL INSERT formats and write the data to a file.
+"""
+
 import io
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -7,7 +13,21 @@ from core.export import export_csv, export_json, export_sql_inserts
 
 
 class ExportDialog(QDialog):
+    """A modal dialog for exporting table or query results to a file.
+
+    Supports CSV, JSON, and SQL INSERT output formats.
+    """
+
     def __init__(self, table_name: str, columns: list[str], rows: list[tuple], parent=None):
+        """Initialize the export dialog.
+
+        Args:
+            table_name: Name of the source table (used in default filename
+                and SQL INSERT generation).
+            columns: Column names for the data.
+            rows: Row data to export.
+            parent: Optional parent widget.
+        """
         super().__init__(parent)
         self.setWindowTitle(f"Export {table_name}")
         self.resize(400, 150)
@@ -41,6 +61,7 @@ class ExportDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _do_export(self) -> None:
+        """Perform the export to a user-selected file."""
         fmt = self._format_combo.currentText()
         ext_map = {
             "CSV (.csv)": ".csv",

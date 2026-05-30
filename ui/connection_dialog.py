@@ -1,3 +1,9 @@
+"""Dialog for opening or creating a SQLite database file.
+
+Provides the :class:`ConnectionDialog` with options to browse for an
+existing file, create a new database, or select from recently opened files.
+"""
+
 import pathlib
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -11,7 +17,19 @@ RECENT_FILES_SETTINGS_KEY = "recent_databases"
 
 
 class ConnectionDialog(QDialog):
+    """A modal dialog for selecting or creating a SQLite database.
+
+    Attributes:
+        _selected_path: The file path chosen by the user, or None.
+    """
+
     def __init__(self, recent_files: list[str] | None = None, parent=None):
+        """Initialize the dialog with optional recent file list.
+
+        Args:
+            recent_files: List of file paths to display as recent databases.
+            parent: Optional parent widget.
+        """
         super().__init__(parent)
         self.setWindowTitle("Open Database")
         self.resize(500, 400)
@@ -42,6 +60,13 @@ class ConnectionDialog(QDialog):
         layout.addWidget(button_box)
 
     def _populate_recent(self, recent_files: list[str]) -> None:
+        """Populate the recent files list widget from a list of paths.
+
+        Only paths that currently exist on disk are shown.
+
+        Args:
+            recent_files: List of file path strings.
+        """
         self._recent_list.clear()
         for path in recent_files:
             p = pathlib.Path(path)
@@ -51,6 +76,7 @@ class ConnectionDialog(QDialog):
                 self._recent_list.addItem(item)
 
     def _browse_open(self) -> None:
+        """Open a file dialog to select an existing database file."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Database", "",
             "SQLite Database (*.db *.sqlite *.sqlite3);;All Files (*)"
@@ -60,6 +86,7 @@ class ConnectionDialog(QDialog):
             self.accept()
 
     def _browse_create(self) -> None:
+        """Open a save dialog to create a new database file."""
         path, _ = QFileDialog.getSaveFileName(
             self, "Create Database", "",
             "SQLite Database (*.db);;All Files (*)"
@@ -69,6 +96,11 @@ class ConnectionDialog(QDialog):
             self.accept()
 
     def _on_recent_clicked(self, item: QListWidgetItem) -> None:
+        """Handle double-click on a recent file list item.
+
+        Args:
+            item: The clicked list widget item.
+        """
         path = item.data(Qt.ItemDataRole.UserRole)
         if path:
             self._selected_path = path
@@ -76,4 +108,5 @@ class ConnectionDialog(QDialog):
 
     @property
     def selected_path(self) -> str | None:
+        """str or None: The file path chosen by the user."""
         return self._selected_path

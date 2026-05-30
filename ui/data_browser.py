@@ -1,3 +1,10 @@
+"""Data browsing widget for viewing and editing table contents.
+
+Provides :class:`DataTableModel` (a QAbstractTableModel) and
+:class:`DataBrowser` (a QWidget with pagination, search, and
+inline editing capabilities).
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QPushButton, QLabel, QSpinBox, QLineEdit, QCheckBox,
@@ -11,21 +18,62 @@ from ui.export_dialog import ExportDialog
 
 
 class DataTableModel(QAbstractTableModel):
+    """Table model for browsing and editing a page of database rows.
+
+    The first column is a checkable selection column. All data columns
+    following it are editable.
+
+    Signals:
+        data_changed: Emitted with (row, column_index) when a cell is edited.
+    """
+
     data_changed = pyqtSignal(int, int)
 
     def __init__(self, columns: list[ColumnInfo], rows: list[tuple], parent=None):
+        """Initialize the model with column metadata and row data.
+
+        Args:
+            columns: Column metadata list from the database schema.
+            rows: Tuples of row values for the current page.
+            parent: Optional parent object.
+        """
         super().__init__(parent)
         self._columns = columns
         self._rows = rows
         self._checked: set[int] = set()
 
     def rowCount(self, parent=QModelIndex()) -> int:
+        """Return the number of rows in the model.
+
+        Args:
+            parent: Unused parent index.
+
+        Returns:
+            Row count.
+        """
         return len(self._rows)
 
     def columnCount(self, parent=QModelIndex()) -> int:
+        """Return the number of columns (selection column + data columns).
+
+        Args:
+            parent: Unused parent index.
+
+        Returns:
+            Column count.
+        """
         return len(self._columns) + 1
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        """Return data for a given index and role.
+
+        Args:
+            index: Model index specifying row and column.
+            role: The data role to query.
+
+        Returns:
+            Data value for the requested role, or None.
+        """
         if not index.isValid():
             return None
         col = index.column()
@@ -45,6 +93,19 @@ class DataTableModel(QAbstractTableModel):
         return None
 
     def setData(self, index: QModelIndex, value, role=Qt.ItemDataRole.EditRole) -> bool:
+        """Set data for a given index.
+
+        Supports check-state changes in column 0 and inline edits in data
+        columns. Emits :attr:`data_changed` on successful edits.
+
+        Args:
+            index: Model index specifying row and column.
+            value: New value.
+            role: The data role being set.
+
+        Returns:
+            True if the data was set successfully.
+        """
         if not index.isValid():
             return False
         col = index.column()
@@ -68,6 +129,16 @@ class DataTableModel(QAbstractTableModel):
         return False
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        """Return item flags for the given index.
+
+        Column 0 is checkable; all other columns are editable.
+
+        Args:
+            index: Model index.
+
+        Returns:
+            Combination of ItemFlags.
+        """
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         if index.column() == 0:
@@ -75,6 +146,16 @@ class DataTableModel(QAbstractTableModel):
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
 
     def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.ItemDataRole.DisplayRole):
+        """Return header data for a section.
+
+        Args:
+            section: Header section index.
+            orientation: Horizontal or vertical.
+            role: Data role.
+
+        Returns:
+            Header string or None.
+        """
         if role == Qt.ItemDataRole.DisplayRole:
             if orientation == Qt.Orientation.Horizontal:
                 if section == 0:
@@ -85,9 +166,15 @@ class DataTableModel(QAbstractTableModel):
 
     @property
     def checked_rows(self) -> set[int]:
+        """set[int]: Row indices that are currently checked."""
         return self._checked
 
     def select_all(self, checked: bool) -> None:
+        """Check or uncheck all rows.
+
+        Args:
+            checked: True to check all rows, False to uncheck all.
+        """
         if checked:
             self._checked = set(range(len(self._rows)))
         else:
@@ -97,14 +184,32 @@ class DataTableModel(QAbstractTableModel):
         self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.CheckStateRole])
 
     def rows_data(self) -> list[tuple]:
+        """list[tuple]: The underlying row data."""
         return self._rows
 
     def columns(self) -> list[ColumnInfo]:
+        """list[ColumnInfo]: The column metadata."""
         return self._columns
 
 
 class DataBrowser(QWidget):
+    """A widget for browsing, searching, editing, and deleting table data.
+
+    Provides pagination, full-text search across all columns, inline
+    editing, row insertion/deletion, and data export.
+
+    Attributes:
+        _table_name: Name of the table being browsed.
+    """
+
     def __init__(self, db: DatabaseConnection, table_name: str, parent=None):
+        """Initialize the data browser for a specific table.
+
+        Args:
+            db: Active database connection.
+            table_name: Name of the table to browse.
+            parent: Optional parent widget.
+        """
         super().__init__(parent)
         self._db = db
         self._table_name = table_name
@@ -118,6 +223,7 @@ class DataBrowser(QWidget):
         self._load_page()
 
     def _setup_ui(self):
+        """Build the data browser UI layout."""
         layout = QVBoxLayout(self)
 
         top_bar = QHBoxLayout()
@@ -183,6 +289,7 @@ class DataBrowser(QWidget):
         layout.addLayout(bottom_bar)
 
     def _load_page(self) -> None:
+        """Load the current page of data from the database."""
         offset = self._page * self._page_size
         query = (
             f"SELECT * FROM {self._quote(self._table_name)}"
@@ -202,22 +309,30 @@ class DataBrowser(QWidget):
         self._total_label.setText(f"Total rows: {self._total_count}")
 
     def _prev_page(self) -> None:
+        """Navigate to the previous page."""
         if self._page > 0:
             self._page -= 1
             self._load_page()
 
     def _next_page(self) -> None:
+        """Navigate to the next page."""
         total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
         if self._page < total_pages - 1:
             self._page += 1
             self._load_page()
 
     def _on_page_size_changed(self, value: int) -> None:
+        """Handle page size spinbox changes.
+
+        Args:
+            value: New page size.
+        """
         self._page_size = value
         self._page = 0
         self._load_page()
 
     def _on_search(self) -> None:
+        """Perform a search across all columns and update the data view."""
         self._search = self._search_input.text().strip()
         if self._search:
             clauses = []
@@ -238,10 +353,16 @@ class DataBrowser(QWidget):
         self._load_page()
 
     def _on_select_all(self, state: int) -> None:
+        """Handle the Select All checkbox state change.
+
+        Args:
+            state: Qt check state integer.
+        """
         if self._model:
             self._model.select_all(state == Qt.CheckState.Checked.value)
 
     def _delete_selected(self) -> None:
+        """Delete all checked rows after confirmation."""
         if not self._model or not self._model.checked_rows:
             QMessageBox.information(self, "Delete", "No rows selected.")
             return
@@ -270,6 +391,7 @@ class DataBrowser(QWidget):
         self._load_page()
 
     def _add_row(self) -> None:
+        """Insert a new row with all-NULL values into the table."""
         cols = ", ".join(self._quote(c.name) for c in self._columns)
         placeholders = ", ".join("?" for _ in self._columns)
         values = [None for _ in self._columns]
@@ -285,6 +407,12 @@ class DataBrowser(QWidget):
             QMessageBox.warning(self, "Error", str(e))
 
     def _on_row_edited(self, row: int, col_idx: int) -> None:
+        """Persist an inline cell edit to the database.
+
+        Args:
+            row: Row index in the model.
+            col_idx: Column index in the model (0-based data column).
+        """
         pk_cols = [c for c in self._columns if c.primary_key]
         if not pk_cols:
             return
@@ -303,10 +431,19 @@ class DataBrowser(QWidget):
             pass
 
     def _export_data(self) -> None:
+        """Open the export dialog for the current page of data."""
         columns = [c.name for c in self._columns]
         rows = self._model.rows_data() if self._model else []
         dlg = ExportDialog(self._table_name, columns, rows, self)
         dlg.exec()
 
     def _quote(self, name: str) -> str:
+        """Return a double-quoted identifier for use in SQL.
+
+        Args:
+            name: Identifier to quote.
+
+        Returns:
+            Double-quoted identifier string.
+        """
         return f'"{name}"'
