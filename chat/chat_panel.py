@@ -32,24 +32,28 @@ class ChatPanel(QWidget):
         self._history.setPlaceholderText("Chat history…")
         layout.addWidget(self._history)
 
-        input_layout = QHBoxLayout()
         self._input = QTextEdit()
         self._input.setPlaceholderText("Ask about your database…")
         self._input.setMaximumHeight(60)
         self._input.setAcceptRichText(False)
         self._input.installEventFilter(self)
-        input_layout.addWidget(self._input)
+        layout.addWidget(self._input)
+
+        btn_layout = QHBoxLayout()
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setToolTip("Clear conversation history")
+        self._clear_btn.setStyleSheet(
+            "QPushButton { color: #c0392b; }"
+            "QPushButton:hover { color: #e74c3c; font-weight: bold; }"
+        )
+        self._clear_btn.clicked.connect(self._on_clear)
+        btn_layout.addWidget(self._clear_btn)
 
         self._send_btn = QPushButton("Send")
         self._send_btn.clicked.connect(self._on_send)
-        input_layout.addWidget(self._send_btn)
+        btn_layout.addWidget(self._send_btn)
 
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setToolTip("Clear conversation history")
-        self._clear_btn.clicked.connect(self._on_clear)
-        input_layout.addWidget(self._clear_btn)
-
-        layout.addLayout(input_layout)
+        layout.addLayout(btn_layout)
 
     def load_history(self, messages: list[tuple[str, str]]) -> None:
         self._history.clear()

@@ -12,7 +12,7 @@ A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query 
 - **Export** — Export tables or query results to CSV, JSON, or SQL INSERT statements
 - **Dark/Light mode** — Toggle via View menu, persisted across sessions
 - **App-state persistence** — Last-opened database, recent files list, and theme preference saved via `QSettings`
-- **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Persists per-database chat history across sessions. Supports report generation (markdown table export) with a ``save`` / ``report`` / ``export`` command. Agent runs on its own background thread. Uses LangChain with HuggingFace models.
+- **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Persists per-database chat history across sessions. Supports professional report generation (markdown + PDF) with a ``save`` / ``report`` / ``export`` command. **Clear history** button with confirmation dialog. Agent runs on its own background thread. Uses LangChain with HuggingFace models.
 - **Non-blocking operations** — All database reads, writes, and chat-agent calls execute on dedicated worker threads so the GUI never freezes
 - **Keyboard shortcuts** — `Ctrl+O` (open database), `Ctrl+W` (close database), `Ctrl+Q` (quit), `Ctrl+Enter` (execute query)
 
@@ -81,7 +81,7 @@ sqlite_client/
 │   ├── agent.py             # Chat agents (RouterChatAgent, SqlAgent, GeneralChatAgent, etc.)
 │   ├── chat_panel.py        # ChatPanel — collapsible chat widget
 │   ├── chat_store.py        # ChatStore — per-database conversation persistence
-│   ├── report_tool.py       # results_to_markdown_table, generate_report — markdown export
+│   ├── report_tool.py       # Professional report generation (markdown + PDF via WeasyPrint)
 │   └── worker.py            # ChatWorker — QObject on background QThread
 └── tests/
     ├── __init__.py
@@ -203,11 +203,25 @@ User types message → presses Enter / clicks Send
                  ├─► RouterAgent classifies message as "chat" or "sql"
                  ├─► Past conversation history is prepended as LangChain messages
                  ├─► GeneralChatAgent or SqlAgent answers
-                 │    └─► SqlAgent (if SQL needed): write SQL → execute → answer
-                 │         └─► If "save"/"report" intent: format as markdown table
-                 │              → save to reports/report_<ts>.md
+                 │    └─► SqlAgent (if SQL needed):
+                 │         Stage 1 — LLM writes SQL → extract ```sql block
+                 │         Stage 2 — Execute SQL → LLM answers in plain language
+                 │         Stage 3 — If "save"/"report"/"export" intent:
+                 │           ├─► New SQL? → LLM generates professional markdown report
+                 │           │    (title, intro, results table, findings, conclusion)
+                 │           └─► Follow-up "save" message without SQL?
+                 │                → scans history for last query → re-executes → report
+                 │           ├─► Saved as: reports/<Title>_<timestamp>.md
+                 │           └─► Saved as: reports/<Title>_<timestamp>.pdf
                  └─► Worker emits response_received(user_msg, reply) [queued]
                       └─► ChatPanel.append_reply → shown in history
+
+Clear history:
+  └─► User clicks Clear (red button below input) → confirmation dialog
+       └─► ChatPanel emits clear_requested
+            └─► MainWindow relays to ChatWorker.clear_history() [queued]
+                 └─► RouterChatAgent.clear_history() → ChatStore.clear_conversation()
+                      └─► ChatPanel history cleared
 
 Database open / close / startup:
   └─► MainWindow emits _chat_set_db(path) → ChatWorker.set_database_path(path)
@@ -243,9 +257,10 @@ User clicks "Commit Changes"
 - **State persistence** — `QSettings` persists dark mode preference, recent files list, and last-opened database path.
 - **Feature branch workflow** — All changes go on feature branches, then fast-forward merged into `main`.
 - **Per-database chat persistence** — Each conversation is linked to a database by its resolved absolute path (so ``./foo.db`` and ``/abs/foo.db`` share the same history). Reopening a database resumes its previous conversation. A separate "General Chat" conversation exists when no database is open. History survives app restarts.
-- **Report generation** — When the user asks to ``save`` / ``report`` / ``export`` query results, the ``SqlAgent`` automatically formats the data as a markdown table and saves it to ``reports/report_<timestamp>.md``.
+- **Professional report generation** — When the user asks to ``save`` / ``report`` / ``export``, the ``SqlAgent`` enters a Stage 3 LLM call that generates a full professional markdown report with title, introduction, results table, key findings, and conclusion. The report is saved as both ``.md`` and ``.pdf`` (via WeasyPrint with professional CSS styling). Files go to ``reports/<Title>_<timestamp>.md`` / ``.pdf``. Follow-up "save" messages (without a new SQL query) automatically reuse the last query from conversation history.
 - **Non-blocking chat** — The `ChatWorker` runs on its own `QThread` (separate from the database worker), so agent calls never block the UI or database operations.
 - **Collapsible chat panel** — Uses `QDockWidget` on the right side of `MainWindow`. The user can close it (via X or **View > Chat** toggle) without losing state.
+- **Clear history** — A red **Clear** button below the input box triggers a confirmation dialog before deleting the current conversation from the database.
 
 ## Development
 

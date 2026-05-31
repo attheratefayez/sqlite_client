@@ -27,7 +27,7 @@ MODEL_NOT_SUPPORTED_HINT = (
 CHAT_SYSTEM_PROMPT = """\
 You are a helpful assistant. Be conversational and friendly.
 Keep responses clear and concise.
-Do NOT use emojis or any emoticons. Plain text only."""
+Plain text only. Never use emojis, emoticons, or smileys."""
 
 SQL_SYSTEM_PROMPT = """\
 You are a helpful assistant with access to a SQLite database.
@@ -40,7 +40,8 @@ To answer questions about the data:
 
 Rules:
 - Be conversational and friendly.
-- Do NOT use emojis or any emoticons. Plain text only."""
+- Plain text only. Never use emojis, emoticons, or smileys.
+- When the user asks you to save, export, or generate a report, the system handles file saving automatically. Do NOT explain file-save instructions — just write the SQL query as usual and let the system take care of the rest."""
 
 SQL_SCHEMA_HINT = "\n\nHere is the database schema for reference:\n{schema}"
 
@@ -50,6 +51,28 @@ I ran your SQL query and got these results:
 {results}
 
 Now answer the user's original question in plain language, based on these results."""
+
+REPORT_PROMPT = """\
+You ran this SQL query against the database:
+
+{sql}
+
+And got these results:
+
+{results_table}
+
+Write a professional markdown report based on these results.
+
+The report must include:
+- # Title — a descriptive title as the first line
+- ## Introduction — explain what was queried and why
+- ## Results — present the data in a markdown table
+- ## Key Findings — highlight the most important observations
+- ## Conclusion — a brief summary of takeaways
+
+Use the actual data to draw meaningful conclusions. Do not make up facts.
+
+Respond ONLY with the report content in valid markdown. Start with the title line."""
 
 
 # ------------------------------------------------------------------
@@ -274,6 +297,8 @@ class SqlAgent(ChatAgent):
 
         sql = self._extract_sql(reply)
         if not sql:
+            if _has_report_intent(message):
+                return self._handle_report_from_history(history)
             return reply
 
         from core.query_executor import QueryExecutor
@@ -298,12 +323,19 @@ class SqlAgent(ChatAgent):
 
         if query_result.success and _has_report_intent(message):
             from chat.report_tool import generate_report, results_to_markdown_table
-            markdown = results_to_markdown_table(
+            table = results_to_markdown_table(
                 query_result.columns, query_result.rows
             )
+            report_prompt = REPORT_PROMPT.format(
+                sql=sql,
+                results_table=table,
+            )
+            report_msgs = [SystemMessage(content=report_prompt)]
             try:
-                filepath = generate_report(content=markdown, title="Query Results")
-                answer_text += f"\n\nReport saved to: {filepath}"
+                report_response = self._llm.invoke(report_msgs)
+                report_content = report_response.content.strip()
+                result = generate_report(report_content)
+                answer_text += f"\n\nReport saved to: {result.md_path}\nPDF: {result.pdf_path}"
             except Exception as exc:
                 answer_text += f"\n\nFailed to save report: {exc}"
 
@@ -315,6 +347,40 @@ class SqlAgent(ChatAgent):
         if m:
             return m.group(1).strip()
         return None
+
+    @staticmethod
+    def _find_last_sql_in_history(history: list | None) -> str | None:
+        if not history:
+            return None
+        for msg in reversed(history):
+            if isinstance(msg, AIMessage):
+                sql = SqlAgent._extract_sql(msg.content)
+                if sql:
+                    return sql
+        return None
+
+    def _handle_report_from_history(self, history: list | None) -> str:
+        sql = self._find_last_sql_in_history(history)
+        if not sql:
+            return ("I don't see any previous query results to report on. "
+                    "Try asking a data question first, then ask to save it as a report.")
+
+        from core.query_executor import QueryExecutor
+        query_result = QueryExecutor(self._db_conn).execute(sql)
+        if not query_result.success:
+            return f"Could not re-run previous query: {query_result.error}"
+
+        from chat.report_tool import generate_report, results_to_markdown_table
+        table = results_to_markdown_table(query_result.columns, query_result.rows)
+        report_prompt = REPORT_PROMPT.format(sql=sql, results_table=table)
+        report_msgs = [SystemMessage(content=report_prompt)]
+        try:
+            report_response = self._llm.invoke(report_msgs)
+            report_content = report_response.content.strip()
+            result = generate_report(report_content)
+            return f"Report saved to: {result.md_path}\nPDF: {result.pdf_path}"
+        except Exception as exc:
+            return f"Failed to save report: {exc}"
 
     def _build_no_db_reply(self) -> str:
         if self._db_path is None:

@@ -1,9 +1,27 @@
 """Tests for the report generation tool."""
 
 import pathlib
-import tempfile
 
-from chat.report_tool import generate_report, results_to_markdown_table
+from chat.report_tool import (
+    ReportResult,
+    generate_report,
+    results_to_markdown_table,
+    slugify,
+)
+
+
+class TestSlugify:
+    def test_basic(self):
+        assert slugify("Employee Salary") == "Employee_Salary"
+
+    def test_special_chars_removed(self):
+        assert slugify("Report: Sales (Q1)") == "Report_Sales_Q1"
+
+    def test_leading_trailing_spaces(self):
+        assert slugify("  Title  ") == "Title"
+
+    def test_empty_string(self):
+        assert slugify("") == ""
 
 
 class TestResultsToMarkdownTable:
@@ -39,49 +57,51 @@ class TestResultsToMarkdownTable:
 
 
 class TestGenerateReport:
-    def test_saves_to_reports_dir(self, tmp_path):
-        with tempfile.TemporaryDirectory() as d:
-            result = generate_report(
-                content="| Col |\n| --- |\n| val |",
-                title="Test Report",
-            )
-            path = pathlib.Path(result)
-            assert path.exists()
-            assert path.suffix == ".md"
-            assert "Test Report" in path.read_text()
+    def test_saves_md_and_pdf(self, tmp_path):
+        md = "# Test Report\n\nSome content."
+        result = generate_report(md, output_dir=str(tmp_path))
+        md_path = pathlib.Path(result.md_path)
+        pdf_path = pathlib.Path(result.pdf_path)
+        assert md_path.exists()
+        assert pdf_path.exists()
+        assert md_path.suffix == ".md"
+        assert pdf_path.suffix == ".pdf"
+        assert "Test Report" in md_path.read_text()
 
-    def test_custom_filename(self, tmp_path):
-        with tempfile.TemporaryDirectory() as d:
-            result = generate_report(
-                content="data",
-                filename="my_report.md",
-            )
-            path = pathlib.Path(result)
-            assert path.name == "my_report.md"
+    def test_title_extracted_for_filename(self, tmp_path):
+        md = "# Employee Salary Summary\n\nData here."
+        result = generate_report(md, output_dir=str(tmp_path))
+        path = pathlib.Path(result.md_path)
+        assert "Employee_Salary_Summary" in path.stem
 
-    def test_auto_adds_md_extension(self, tmp_path):
-        with tempfile.TemporaryDirectory() as d:
-            result = generate_report(
-                content="data",
-                filename="my_report",
-            )
-            path = pathlib.Path(result)
-            assert path.suffix == ".md"
+    def test_title_missing_falls_back_to_timestamp(self, tmp_path):
+        md = "No title heading here."
+        result = generate_report(md, output_dir=str(tmp_path))
+        path = pathlib.Path(result.md_path)
+        assert path.stem.startswith("report_")
 
-    def test_content_includes_title(self):
-        with tempfile.TemporaryDirectory() as d:
-            result = generate_report(
-                content="| A | B |\n| --- | --- |",
-                title="My Query",
-            )
-            text = pathlib.Path(result).read_text()
-            assert "# My Query" in text
-            assert "Generated on" in text
-            assert "| A | B |" in text
+    def test_timestamp_suffix_prevents_overwrite(self, tmp_path):
+        md = "# Same Title\n\nContent."
+        r1 = generate_report(md, output_dir=str(tmp_path))
+        r2 = generate_report(md, output_dir=str(tmp_path))
+        assert r1.md_path != r2.md_path
+        assert r1.pdf_path != r2.pdf_path
 
-    def test_generates_filename_when_not_provided(self):
-        with tempfile.TemporaryDirectory() as d:
-            result = generate_report(content="test")
-            path = pathlib.Path(result)
-            assert path.name.startswith("report_")
-            assert path.suffix == ".md"
+    def test_pdf_is_valid(self, tmp_path):
+        md = "# PDF Test\n\nBody text."
+        result = generate_report(md, output_dir=str(tmp_path))
+        pdf_data = pathlib.Path(result.pdf_path).read_bytes()
+        assert pdf_data.startswith(b"%PDF")
+
+    def test_returns_report_result(self, tmp_path):
+        md = "# Hello\n\nWorld."
+        result = generate_report(md, output_dir=str(tmp_path))
+        assert isinstance(result, ReportResult)
+        assert result.md_path.endswith(".md")
+        assert result.pdf_path.endswith(".pdf")
+
+    def test_creates_output_dir(self, tmp_path):
+        nested = tmp_path / "a" / "b" / "c"
+        md = "# Nested\n\nContent."
+        result = generate_report(md, output_dir=str(nested))
+        assert pathlib.Path(result.md_path).exists()
