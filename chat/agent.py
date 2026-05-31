@@ -53,7 +53,8 @@ RULES:
 - If the question is general (hello, how are you, tell me a joke, etc.),
   just answer naturally without tools.
 - Keep responses clear and concise.
-- Use the tool results to provide accurate, data-driven answers."""
+- Use the tool results to provide accurate, data-driven answers.
+- Do NOT use emojis or any emoticons. Plain text only."""
 
 MAX_REACT_STEPS = 6
 
