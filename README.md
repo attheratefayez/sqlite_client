@@ -2,6 +2,8 @@
 
 A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query editor with syntax highlighting, table data browser with pagination and deferred inline editing, batch delete, export, dark/light theme, app-state persistence, and an extensible chat assistant. All database operations and chat-agent calls run asynchronously on background threads to keep the UI responsive.
 
+![SQLite Client](sqlite_client.png)
+
 ## Features
 
 - **Database connection management** — Open existing `.db`/`.sqlite` files or create new databases with a file picker or recent files list
@@ -20,6 +22,22 @@ A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query 
 
 - Python 3.13+
 - PyQt6 >= 6.5
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Language** | Python 3.13+ |
+| **GUI Framework** | PyQt6 (Qt 6) |
+| **Database** | SQLite3 (via `sqlite3` module, WAL mode, `check_same_thread=False`) |
+| **ORM / Query** | Raw SQL with parameterised queries, `QueryExecutor` wrapper |
+| **Charts / PDF** | WeasyPrint (markdown → HTML+CSS → PDF pipeline) |
+| **AI / LLM** | LangChain, HuggingFace Inference API (Qwen/Qwen3.5-4B default) |
+| **Async Model** | `QThread` + `QObject` worker pattern (cross-thread signals) |
+| **Testing** | pytest, pytest-qt |
+| **Packaging** | `pyproject.toml`, `uv` package manager |
+| **UI Patterns** | `QAbstractTableModel` (Model/View), `QDockWidget`, `QSplitter`, `QTabWidget` |
+| **Persistence** | SQLite (chat history), `QSettings` (app preferences) |
 
 ## Installation
 
