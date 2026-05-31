@@ -165,6 +165,22 @@ QListWidget::item:selected {
     background-color: #0078d4;
     color: #ffffff;
 }
+
+QDockWidget {
+    color: #333333;
+}
+
+QDockWidget::title {
+    background-color: #e8e8e8;
+    padding: 6px;
+    color: #333333;
+}
+
+QTextEdit {
+    background-color: #ffffff;
+    color: #333333;
+    border: 1px solid #d0d0d0;
+}
 """
 
 DARK_THEME = """
@@ -342,6 +358,23 @@ QListWidget::item:hover {
 QListWidget::item:selected {
     background-color: #094771;
     color: #ffffff;
+}
+
+QDockWidget {
+    color: #cccccc;
+    titlebar-close-icon: url(none);
+}
+
+QDockWidget::title {
+    background-color: #2d2d2d;
+    padding: 6px;
+    color: #cccccc;
+}
+
+QTextEdit {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
 }
 
 QPlainTextEdit {
