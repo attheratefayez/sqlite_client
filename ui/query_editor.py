@@ -132,11 +132,14 @@ class QueryTab(QWidget):
 
 
 class QueryEditorWidget(QWidget):
-    """Multi-tab query editor with a shared executor.
+    """Multi-tab query editor with async SQL execution.
 
-    Manages multiple :class:`QueryTab` instances and routes SQL
-    execution through a single :class:`QueryExecutor`.
+    Manages multiple :class:`QueryTab` instances and requests SQL
+    execution via :attr:`execute_query_requested`.  Results arrive
+    through :meth:`_on_query_result`.
     """
+
+    execute_query_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         """Initialize the editor with one default tab.
@@ -145,7 +148,7 @@ class QueryEditorWidget(QWidget):
             parent: Optional parent widget.
         """
         super().__init__(parent)
-        self._executor: QueryExecutor | None = None
+        self._connected = False
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
 
@@ -164,16 +167,13 @@ class QueryEditorWidget(QWidget):
         self._tab_counter = 0
         self.add_tab()
 
-    def set_database(self, db: DatabaseConnection | None) -> None:
-        """Set the database connection used by all query tabs.
+    def set_connected(self, connected: bool) -> None:
+        """Enable or disable query execution.
 
         Args:
-            db: A DatabaseConnection, or None to clear.
+            connected: True if a database is open.
         """
-        if db is not None:
-            self._executor = QueryExecutor(db)
-        else:
-            self._executor = None
+        self._connected = connected
 
     def add_tab(self) -> QueryTab:
         """Add a new query tab.
@@ -207,18 +207,25 @@ class QueryEditorWidget(QWidget):
             self._tabs.removeTab(index)
 
     def _on_tab_execute(self, sql: str) -> None:
-        """Execute SQL in the active tab and display results.
+        """Request SQL execution on the worker thread.
 
         Args:
             sql: SQL statement to execute.
         """
-        if self._executor is None:
+        if not self._connected:
             tab = self.current_tab()
             if tab:
                 err = QueryResult(error="No database connection")
                 tab.show_query_result(err)
             return
-        result = self._executor.execute(sql)
+        self.execute_query_requested.emit(sql)
+
+    def _on_query_result(self, result: QueryResult) -> None:
+        """Display a query result from the worker in the current tab.
+
+        Args:
+            result: The result to display.
+        """
         tab = self.current_tab()
         if tab:
             tab.show_query_result(result)
