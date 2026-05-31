@@ -2,7 +2,7 @@
 
 import os
 
-from chat.agent import DemoAgent, ChatAgent, LangChainAgent
+from chat.agent import DemoAgent, ChatAgent, LangChainAgent, DEFAULT_MODEL
 
 
 class TestChatAgent:
@@ -53,6 +53,16 @@ class TestDemoAgent:
 
 
 class TestLangChainAgent:
+    def test_default_model_is_supported(self):
+        assert DEFAULT_MODEL == "HuggingFaceH4/zephyr-7b-beta"
+        agent = LangChainAgent()
+        assert agent._model == DEFAULT_MODEL
+
+    def test_set_model_updates_model(self, tmp_path):
+        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
+        agent.set_model("mistralai/Mistral-7B-Instruct-v0.3")
+        assert agent._model == "mistralai/Mistral-7B-Instruct-v0.3"
+
     def test_no_database(self, tmp_path):
         agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
         result = agent.answer("hello")

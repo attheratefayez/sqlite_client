@@ -11,6 +11,18 @@ import re
 from chat.chat_store import ChatStore
 from dotenv import load_dotenv
 
+DEFAULT_MODEL = "HuggingFaceH4/zephyr-7b-beta"
+
+MODEL_NOT_SUPPORTED_HINT = (
+    "The model '{model}' is not available on the HuggingFace Inference API. "
+    "Try one of these:\n"
+    "  - HuggingFaceH4/zephyr-7b-beta\n"
+    "  - microsoft/Phi-3-mini-4k-instruct\n"
+    "  - mistralai/Mistral-7B-Instruct-v0.3\n"
+    "  - google/gemma-2-2b-it\n\n"
+    "You can change the model via View > Chat Model..."
+)
+
 load_dotenv()
 
 
@@ -29,6 +41,9 @@ class ChatAgent:
         raise NotImplementedError
 
     def set_database_path(self, path: str | None) -> None:
+        pass
+
+    def set_model(self, model: str) -> None:
         pass
 
     def get_history(self) -> list[tuple[str, str]]:
@@ -56,7 +71,7 @@ class LangChainAgent(ChatAgent):
     def __init__(
         self,
         db_path: str | None = None,
-        model: str = "Qwen/Qwen3.5-4B",
+        model: str = DEFAULT_MODEL,
         chat_store_path: str | None = None,
     ):
         self._db_path = db_path
@@ -70,6 +85,10 @@ class LangChainAgent(ChatAgent):
 
     def set_database_path(self, path: str | None) -> None:
         self._db_path = path
+        self._setup_if_possible()
+
+    def set_model(self, model: str) -> None:
+        self._model = model
         self._setup_if_possible()
 
     def _setup_if_possible(self) -> None:
@@ -93,11 +112,16 @@ class LangChainAgent(ChatAgent):
             )
             self._llm = ChatHuggingFace(llm=endpoint)
         except Exception as exc:
-            self._setup_error = (
-                f"Failed to initialise: {exc}\n\nMake sure you have "
-                "internet access. For higher rate limits, set the "
-                "HUGGINGFACEHUB_API_TOKEN environment variable."
-            )
+            msg = str(exc)
+            if "not supported" in msg.lower() or "model_not_supported" in msg:
+                hint = MODEL_NOT_SUPPORTED_HINT.format(model=self._model)
+                self._setup_error = f"Failed to initialise: {msg}\n\n{hint}"
+            else:
+                self._setup_error = (
+                    f"Failed to initialise: {msg}\n\nMake sure you have "
+                    "internet access. For higher rate limits, set the "
+                    "HUGGINGFACEHUB_API_TOKEN environment variable."
+                )
 
     def get_history(self) -> list[tuple[str, str]]:
         msgs = self._store.get_messages(self._conversation_id)
