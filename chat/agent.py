@@ -6,6 +6,8 @@ import re
 
 from chat.chat_store import ChatStore
 from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
 load_dotenv()
 
@@ -54,9 +56,22 @@ Now answer the user's original question in plain language, based on these result
 # Helpers
 # ------------------------------------------------------------------
 
-def _make_llm(model: str):
-    from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+def _history_to_langchain(history: list[dict]) -> list:
+    """Convert ChatStore message dicts (role, content) to LangChain messages."""
+    _MAP = {
+        "user": HumanMessage,
+        "assistant": AIMessage,
+        "system": SystemMessage,
+    }
+    result = []
+    for h in history:
+        cls = _MAP.get(h["role"])
+        if cls:
+            result.append(cls(content=h["content"]))
+    return result
 
+
+def _make_llm(model: str):
     endpoint = HuggingFaceEndpoint(
         model=model,
         max_new_tokens=1024,
@@ -64,6 +79,14 @@ def _make_llm(model: str):
         timeout=120,
     )
     return ChatHuggingFace(llm=endpoint)
+
+
+_REPORT_KEYWORDS = frozenset({"save", "report", "export"})
+
+
+def _has_report_intent(message: str) -> bool:
+    msg_lower = message.lower()
+    return any(kw in msg_lower for kw in _REPORT_KEYWORDS)
 
 
 # ------------------------------------------------------------------
@@ -112,22 +135,13 @@ class RouterAgent:
         "schema", "data", "query", "queries",
         "select", "insert", "update", "delete",
         "count", "sum", "avg", "total",
+        "save", "report", "export",
     })
 
     @classmethod
     def classify(cls, message: str) -> str:
         msg_lower = message.lower()
         return "sql" if any(kw in msg_lower for kw in cls._SQL_KEYWORDS) else "chat"
-
-        try:
-            response = self._llm.invoke([
-                SystemMessage(content=ROUTER_SYSTEM_PROMPT),
-                HumanMessage(content=message),
-            ])
-            result = response.content.strip().lower()
-            return "sql" if "sql" in result else "chat"
-        except Exception:
-            return "chat"
 
 
 # ------------------------------------------------------------------
@@ -155,16 +169,17 @@ class GeneralChatAgent(ChatAgent):
         except Exception as exc:
             self._error = f"Chat agent init failed: {exc}"
 
-    def answer(self, message: str) -> str:
+    def answer(self, message: str, history: list | None = None) -> str:
         if self._llm is None:
             return "Chat agent is not available.\n" + (self._error or "")
-        from langchain_core.messages import HumanMessage, SystemMessage
+
+        messages = [SystemMessage(content=CHAT_SYSTEM_PROMPT)]
+        if history:
+            messages.extend(history)
+        messages.append(HumanMessage(content=message))
 
         try:
-            response = self._llm.invoke([
-                SystemMessage(content=CHAT_SYSTEM_PROMPT),
-                HumanMessage(content=message),
-            ])
+            response = self._llm.invoke(messages)
             return response.content.strip()
         except Exception as exc:
             return f"Chat agent error: {exc}"
@@ -199,6 +214,8 @@ class SqlAgent(ChatAgent):
         self._setup()
 
     def set_database_path(self, path: str | None) -> None:
+        if self._db_conn is not None:
+            self._db_conn.close()
         self._db_path = path
         self._setup()
 
@@ -209,12 +226,17 @@ class SqlAgent(ChatAgent):
     def _setup(self) -> None:
         self._llm = None
         self._sql_db = None
+        self._db_conn = None
         self._error = None
 
         if self._db_path is None:
             return
 
         try:
+            from core.database import DatabaseConnection
+            self._db_conn = DatabaseConnection()
+            self._db_conn.connect(self._db_path)
+
             from langchain_community.utilities import SQLDatabase
 
             self._sql_db = SQLDatabase.from_uri(f"sqlite:///{self._db_path}")
@@ -231,9 +253,7 @@ class SqlAgent(ChatAgent):
                     "HUGGINGFACEHUB_API_TOKEN environment variable."
                 )
 
-    def answer(self, message: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-
+    def answer(self, message: str, history: list | None = None) -> str:
         if self._llm is None or self._sql_db is None:
             return self._build_no_db_reply()
 
@@ -241,7 +261,10 @@ class SqlAgent(ChatAgent):
         if self._sql_db is not None:
             prompt += SQL_SCHEMA_HINT.format(schema=self._sql_db.table_info)
 
-        stage1_msgs = [SystemMessage(content=prompt), HumanMessage(content=message)]
+        stage1_msgs = [SystemMessage(content=prompt)]
+        if history:
+            stage1_msgs.extend(history)
+        stage1_msgs.append(HumanMessage(content=message))
 
         try:
             response = self._llm.invoke(stage1_msgs)
@@ -253,10 +276,13 @@ class SqlAgent(ChatAgent):
         if not sql:
             return reply
 
-        try:
-            results = self._sql_db.run(sql)
-        except Exception as exc:
-            results = f"Error running query: {exc}"
+        from core.query_executor import QueryExecutor
+        query_result = QueryExecutor(self._db_conn).execute(sql)
+
+        if query_result.success:
+            results = str(query_result.rows)
+        else:
+            results = f"Error running query: {query_result.error}"
 
         stage2_msgs = stage1_msgs.copy()
         stage2_msgs.append(AIMessage(content=reply))
@@ -266,9 +292,22 @@ class SqlAgent(ChatAgent):
 
         try:
             response = self._llm.invoke(stage2_msgs)
-            return response.content.strip()
+            answer_text = response.content.strip()
         except Exception as exc:
             return f"Error: {exc}"
+
+        if query_result.success and _has_report_intent(message):
+            from chat.report_tool import generate_report, results_to_markdown_table
+            markdown = results_to_markdown_table(
+                query_result.columns, query_result.rows
+            )
+            try:
+                filepath = generate_report(content=markdown, title="Query Results")
+                answer_text += f"\n\nReport saved to: {filepath}"
+            except Exception as exc:
+                answer_text += f"\n\nFailed to save report: {exc}"
+
+        return answer_text
 
     @staticmethod
     def _extract_sql(text: str) -> str | None:
@@ -304,7 +343,7 @@ class RouterChatAgent(ChatAgent):
     ):
         self._db_path = db_path
         self._store = ChatStore(chat_store_path)
-        self._conversation_id = self._store.create_conversation()
+        self._conversation_id = self._store.get_or_create_conversation(db_path or "")
 
         self._chat_agent = GeneralChatAgent(chat_model)
         self._sql_agent = SqlAgent(db_path, sql_model)
@@ -324,13 +363,16 @@ class RouterChatAgent(ChatAgent):
     def answer(self, message: str) -> str:
         self._store.add_message(self._conversation_id, "user", message)
 
+        full = self._store.get_messages(self._conversation_id)
+        past_history = _history_to_langchain(full[:-1])
+
         category = RouterAgent.classify(message)
 
         try:
             if category == "sql":
-                reply = self._sql_agent.answer(message)
+                reply = self._sql_agent.answer(message, history=past_history)
             else:
-                reply = self._chat_agent.answer(message)
+                reply = self._chat_agent.answer(message, history=past_history)
         except Exception as exc:
             reply = f"Error: {exc}"
 
@@ -340,6 +382,7 @@ class RouterChatAgent(ChatAgent):
     def set_database_path(self, path: str | None) -> None:
         self._db_path = path
         self._sql_agent.set_database_path(path)
+        self._conversation_id = self._store.get_or_create_conversation(path or "")
 
     def get_history(self) -> list[tuple[str, str]]:
         msgs = self._store.get_messages(self._conversation_id)
