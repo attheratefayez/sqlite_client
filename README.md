@@ -12,7 +12,7 @@ A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query 
 - **Export** — Export tables or query results to CSV, JSON, or SQL INSERT statements
 - **Dark/Light mode** — Toggle via View menu, persisted across sessions
 - **App-state persistence** — Last-opened database, recent files list, and theme preference saved via `QSettings`
-- **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Agent runs on its own background thread. Currently ships with a `DemoAgent` (placeholder); designed for easy integration with LangChain or other LLM frameworks.
+- **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Persists per-database chat history across sessions. Supports report generation (markdown table export) with a ``save`` / ``report`` / ``export`` command. Agent runs on its own background thread. Uses LangChain with HuggingFace models.
 - **Non-blocking operations** — All database reads, writes, and chat-agent calls execute on dedicated worker threads so the GUI never freezes
 - **Keyboard shortcuts** — `Ctrl+O` (open database), `Ctrl+W` (close database), `Ctrl+Q` (quit), `Ctrl+Enter` (execute query)
 
@@ -76,13 +76,22 @@ sqlite_client/
 ├── resources/
 │   ├── __init__.py
 │   └── style.py             # LIGHT_THEME, DARK_THEME, and THEMES dict with comprehensive QSS
+├── chat/
+│   ├── __init__.py
+│   ├── agent.py             # Chat agents (RouterChatAgent, SqlAgent, GeneralChatAgent, etc.)
+│   ├── chat_panel.py        # ChatPanel — collapsible chat widget
+│   ├── chat_store.py        # ChatStore — per-database conversation persistence
+│   ├── report_tool.py       # results_to_markdown_table, generate_report — markdown export
+│   └── worker.py            # ChatWorker — QObject on background QThread
 └── tests/
     ├── __init__.py
     ├── chat/
     │   ├── __init__.py
-    │   ├── test_agent.py            # 4 tests
-    │   ├── test_chat_panel.py       # 4 tests
-    │   └── test_worker.py           # 2 tests
+    │   ├── test_agent.py
+    │   ├── test_chat_panel.py
+    │   ├── test_chat_store.py
+    │   ├── test_report_tool.py
+    │   └── test_worker.py
     ├── core/
     │   ├── __init__.py
     │   ├── test_database.py       # 14 tests
@@ -190,9 +199,20 @@ User opens table / navigates / searches
 User types message → presses Enter / clicks Send
   └─► ChatPanel emits message_sent(text)
        └─► MainWindow relays to ChatWorker.send_message(text) [queued]
-            └─► Chat Worker thread: agent.answer(text)
+            └─► Chat Worker thread: RouterChatAgent.answer(text)
+                 ├─► RouterAgent classifies message as "chat" or "sql"
+                 ├─► Past conversation history is prepended as LangChain messages
+                 ├─► GeneralChatAgent or SqlAgent answers
+                 │    └─► SqlAgent (if SQL needed): write SQL → execute → answer
+                 │         └─► If "save"/"report" intent: format as markdown table
+                 │              → save to reports/report_<ts>.md
                  └─► Worker emits response_received(user_msg, reply) [queued]
                       └─► ChatPanel.append_reply → shown in history
+
+Database open / close / startup:
+  └─► MainWindow emits _chat_set_db(path) → ChatWorker.set_database_path(path)
+       └─► RouterChatAgent switches conversation via get_or_create_conversation(path)
+            └─► ChatWorker emits history_loaded(messages) → ChatPanel loads history
 ```
 
 #### Inline Edit Flow
@@ -222,7 +242,8 @@ User clicks "Commit Changes"
 - **Async worker** — All heavy DB operations run on a `DatabaseWorker` on a dedicated `QThread`. The worker owns its own `DatabaseConnection` to the same file. Schema/introspection queries remain synchronous on the main-thread connection.
 - **State persistence** — `QSettings` persists dark mode preference, recent files list, and last-opened database path.
 - **Feature branch workflow** — All changes go on feature branches, then fast-forward merged into `main`.
-- **Extensible agent architecture** — `ChatAgent` is an abstract base class; `DemoAgent` provides a placeholder. Swap in a LangChain-powered agent by implementing the `answer(message) -> str` interface.
+- **Per-database chat persistence** — Each conversation is linked to a database by its resolved absolute path (so ``./foo.db`` and ``/abs/foo.db`` share the same history). Reopening a database resumes its previous conversation. A separate "General Chat" conversation exists when no database is open. History survives app restarts.
+- **Report generation** — When the user asks to ``save`` / ``report`` / ``export`` query results, the ``SqlAgent`` automatically formats the data as a markdown table and saves it to ``reports/report_<timestamp>.md``.
 - **Non-blocking chat** — The `ChatWorker` runs on its own `QThread` (separate from the database worker), so agent calls never block the UI or database operations.
 - **Collapsible chat panel** — Uses `QDockWidget` on the right side of `MainWindow`. The user can close it (via X or **View > Chat** toggle) without losing state.
 
