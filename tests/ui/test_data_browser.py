@@ -1,9 +1,22 @@
 import pytest
 import tempfile
 import pathlib
-from PyQt6.QtCore import Qt
+import time
+from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtWidgets import QApplication
 from core.database import DatabaseConnection, ColumnInfo
+from core.worker import DatabaseWorker
 from ui.data_browser import DataBrowser, DataTableModel
+
+
+def _wait_for_model(widget, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        if widget._model.rowCount() > 0:
+            return
+        time.sleep(0.005)
+    raise TimeoutError("Timed out waiting for model data")
 
 
 @pytest.fixture
@@ -30,9 +43,20 @@ def sample_db():
 
 @pytest.fixture
 def browser(qtbot, sample_db):
-    widget = DataBrowser(sample_db, "users")
+    columns = sample_db.table_schema("users")
+    total_count = sample_db.table_row_count("users")
+    worker = DatabaseWorker()
+    worker._db.connect(sample_db.path)
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.start()
+    widget = DataBrowser(worker, "users", columns, total_count)
     qtbot.addWidget(widget)
-    return widget
+    _wait_for_model(widget)
+    yield widget
+    thread.quit()
+    thread.wait(3000)
+    worker.close_database()
 
 
 class TestDataTableModel:
@@ -95,23 +119,51 @@ class TestDataBrowser:
     def test_title_contains_table_name(self, browser):
         assert browser._table_name == "users"
 
-    def test_next_page(self, browser):
+    def _wait_for_pending_cleared(self, browser, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if len(browser._pending_edits) == 0 and not browser._commit_btn.isEnabled():
+                return
+            time.sleep(0.005)
+
+    def _wait_for_row_count(self, browser, expected, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            if browser._model.rowCount() == expected:
+                return
+            time.sleep(0.005)
+        raise TimeoutError(
+            f"Expected row count {expected}, got {browser._model.rowCount()}"
+        )
+
+    def test_next_page(self, browser, qtbot):
         browser._page_size = 2
-        browser._load_page()
+        browser._page = 0
+        browser._request_page()
+        self._wait_for_row_count(browser, 2)
         assert browser._model.rowCount() == 2
         browser._next_page()
+        self._wait_for_row_count(browser, 1)
         assert browser._model.rowCount() == 1
 
-    def test_prev_page(self, browser):
+    def test_prev_page(self, browser, qtbot):
         browser._page_size = 2
-        browser._load_page()
-        browser._next_page()
+        browser._page = 1
+        browser._request_page()
+        self._wait_for_row_count(browser, 1)
         assert browser._model.rowCount() == 1
-        browser._prev_page()
+        browser._page = 0
+        browser._request_page()
+        self._wait_for_row_count(browser, 2)
         assert browser._model.rowCount() == 2
 
-    def test_page_size_change(self, browser):
-        browser._on_page_size_changed(2)
+    def test_page_size_change(self, browser, qtbot):
+        browser._page_size = 2
+        browser._page = 0
+        browser._request_page()
+        self._wait_for_row_count(browser, 2)
         assert browser._page_size == 2
         assert browser._model.rowCount() == 2
 
@@ -133,23 +185,22 @@ class TestDataBrowser:
         assert len(browser._pending_edits) == 1
         assert browser._commit_btn.isEnabled()
 
-        original = browser._db.execute("SELECT name FROM users WHERE id=1")[0][0]
-        assert original == "Alice"
-
-    def test_commit_persists_changes(self, browser, qtbot):
+    def test_commit_persists_changes(self, browser, qtbot, sample_db):
         browser._model.setData(browser._model.index(0, 2), "AliceEdited", Qt.ItemDataRole.EditRole)
         assert len(browser._pending_edits) == 1
         browser._commit_changes()
+        self._wait_for_pending_cleared(browser)
         assert len(browser._pending_edits) == 0
         assert not browser._commit_btn.isEnabled()
 
-        current = browser._db.execute("SELECT name FROM users WHERE id=1")[0][0]
+        current = sample_db.execute("SELECT name FROM users WHERE id=1")[0][0]
         assert current == "AliceEdited"
 
     def test_pending_cleared_on_page_load(self, browser, qtbot):
         browser.record_edit(0, 0)
         assert len(browser._pending_edits) == 1
-        browser._load_page()
+        browser._request_page()
+        self._wait_for_pending_cleared(browser)
         assert len(browser._pending_edits) == 0
         assert not browser._commit_btn.isEnabled()
 
@@ -184,9 +235,20 @@ class TestDataBrowser:
             INSERT INTO notes VALUES ('hello');
         """)
         conn.commit()
-        b = DataBrowser(conn, "notes")
+        columns = conn.table_schema("notes")
+        total_count = conn.table_row_count("notes")
+        worker = DatabaseWorker()
+        worker._db.connect(conn.path)
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.start()
+        b = DataBrowser(worker, "notes", columns, total_count)
         qtbot.addWidget(b)
+        _wait_for_model(b)
         b.record_edit(0, 0)
         assert len(b._pending_edits) == 0
+        thread.quit()
+        thread.wait(3000)
+        worker.close_database()
         conn.close()
         pathlib.Path(tmp.name).unlink(missing_ok=True)

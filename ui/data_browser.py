@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QColor
 
 from core.database import DatabaseConnection, ColumnInfo
+from core.worker import DatabaseWorker
 from ui.export_dialog import ExportDialog
 
 
@@ -196,32 +197,63 @@ class DataBrowser(QWidget):
     """A widget for browsing, searching, editing, and deleting table data.
 
     Provides pagination, full-text search across all columns, inline
-    editing, row insertion/deletion, and data export.
+    editing, row insertion/deletion, and data export.  All database
+    operations run on a background :class:`DatabaseWorker` thread.
 
     Attributes:
         _table_name: Name of the table being browsed.
     """
 
-    def __init__(self, db: DatabaseConnection, table_name: str, parent=None):
+    load_page_requested = pyqtSignal(str, int, int, str)
+    commit_requested = pyqtSignal(str, list, list)
+    add_row_requested = pyqtSignal(str, list)
+    delete_requested = pyqtSignal(str, str, list)
+
+    def __init__(
+        self,
+        worker: DatabaseWorker,
+        table_name: str,
+        columns: list[ColumnInfo],
+        total_count: int,
+        parent=None,
+    ):
         """Initialize the data browser for a specific table.
 
         Args:
-            db: Active database connection.
+            worker: Background worker for async database operations.
             table_name: Name of the table to browse.
+            columns: Pre-fetched column schema for the table.
+            total_count: Pre-fetched total row count.
             parent: Optional parent widget.
         """
         super().__init__(parent)
-        self._db = db
+        self._worker = worker
         self._table_name = table_name
-        self._columns: list[ColumnInfo] = db.table_schema(table_name)
+        self._columns = columns
         self._page = 0
         self._page_size = 100
         self._search: str = ""
-        self._total_count = db.table_row_count(table_name)
+        self._total_count = total_count
 
         self._pending_edits: dict[tuple[Any, str], str] = {}
+        self._busy = False
+        self._model = DataTableModel(self._columns, [])
         self._setup_ui()
-        self._load_page()
+
+        self._table_view.setModel(self._model)
+
+        self.load_page_requested.connect(worker.request_data_page)
+        self.commit_requested.connect(worker.request_commit)
+        self.add_row_requested.connect(worker.request_add_row)
+        self.delete_requested.connect(worker.request_delete_rows)
+
+        worker.data_page_finished.connect(self._on_data_page_loaded)
+        worker.edits_committed.connect(self._on_action_done)
+        worker.row_added.connect(self._on_action_done)
+        worker.rows_deleted.connect(self._on_action_done)
+        worker.error.connect(self._on_worker_error)
+
+        self._request_page()
 
     def _setup_ui(self):
         """Build the data browser UI layout."""
@@ -294,40 +326,61 @@ class DataBrowser(QWidget):
 
         layout.addLayout(bottom_bar)
 
-    def _load_page(self) -> None:
-        """Load the current page of data from the database."""
-        offset = self._page * self._page_size
-        query = (
-            f"SELECT * FROM {self._quote(self._table_name)}"
-            f" LIMIT {self._page_size} OFFSET {offset}"
+    def _request_page(self) -> None:
+        """Request the current page from the worker thread."""
+        self._busy = True
+        self._set_controls_enabled(False)
+        self.load_page_requested.emit(
+            self._table_name, self._page, self._page_size, self._search,
         )
-        try:
-            _, rows = self._db.execute_with_results(query)
-        except Exception:
-            rows = []
 
+    def _on_data_page_loaded(
+        self,
+        table_name: str,
+        columns: list,
+        rows: list[tuple],
+        total_count: int,
+    ) -> None:
+        """Handle a page of data loaded by the worker."""
+        if table_name != self._table_name:
+            return
+        self._total_count = total_count
         self._pending_edits.clear()
         self._commit_btn.setEnabled(False)
         self._model = DataTableModel(self._columns, rows)
         self._model.data_changed.connect(self.record_edit)
         self._table_view.setModel(self._model)
+        self._update_nav_labels()
+        self._busy = False
+        self._set_controls_enabled(True)
 
+    def _update_nav_labels(self) -> None:
+        """Refresh pagination labels."""
         total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
         self._page_label.setText(f"Page {self._page + 1} of {total_pages}")
         self._total_label.setText(f"Total rows: {self._total_count}")
 
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        """Enable or disable interactive controls during loading."""
+        self._page_prev.setEnabled(enabled and self._page > 0)
+        self._page_next.setEnabled(enabled)
+        self._page_size_spin.setEnabled(enabled)
+        self._search_input.setEnabled(enabled)
+        self._delete_btn.setEnabled(enabled)
+        self._add_row_btn.setEnabled(enabled)
+
     def _prev_page(self) -> None:
         """Navigate to the previous page."""
-        if self._page > 0 and self._prompt_discard_or_abort():
+        if self._page > 0 and self._prompt_discard_or_abort() and not self._busy:
             self._page -= 1
-            self._load_page()
+            self._request_page()
 
     def _next_page(self) -> None:
         """Navigate to the next page."""
         total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
-        if self._page < total_pages - 1 and self._prompt_discard_or_abort():
+        if self._page < total_pages - 1 and self._prompt_discard_or_abort() and not self._busy:
             self._page += 1
-            self._load_page()
+            self._request_page()
 
     def _on_page_size_changed(self, value: int) -> None:
         """Handle page size spinbox changes.
@@ -335,33 +388,18 @@ class DataBrowser(QWidget):
         Args:
             value: New page size.
         """
-        if self._prompt_discard_or_abort():
+        if self._prompt_discard_or_abort() and not self._busy:
             self._page_size = value
             self._page = 0
-            self._load_page()
+            self._request_page()
 
     def _on_search(self) -> None:
         """Perform a search across all columns and update the data view."""
-        if not self._prompt_discard_or_abort():
+        if not self._prompt_discard_or_abort() or self._busy:
             return
         self._search = self._search_input.text().strip()
-        if self._search:
-            clauses = []
-            for col in self._columns:
-                escaped = self._search.replace("'", "''")
-                clauses.append(
-                    f"{self._quote(col.name)} LIKE '%{escaped}%'"
-                )
-            where = " OR ".join(clauses)
-            try:
-                row = self._db.execute(f"SELECT COUNT(*) FROM {self._quote(self._table_name)} WHERE {where}")
-                self._total_count = row[0][0] if row else 0
-            except Exception:
-                self._total_count = 0
-        else:
-            self._total_count = self._db.table_row_count(self._table_name)
         self._page = 0
-        self._load_page()
+        self._request_page()
 
     def _on_select_all(self, state: int) -> None:
         """Handle the Select All checkbox state change.
@@ -377,7 +415,7 @@ class DataBrowser(QWidget):
         if not self._model or not self._model.checked_rows:
             QMessageBox.information(self, "Delete", "No rows selected.")
             return
-        if not self._prompt_discard_or_abort():
+        if not self._prompt_discard_or_abort() or self._busy:
             return
         rows = sorted(self._model.checked_rows, reverse=True)
         pk_cols = [c for c in self._columns if c.primary_key]
@@ -394,32 +432,17 @@ class DataBrowser(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        for pk_val in pk_values:
-            self._db.execute(
-                f"DELETE FROM {self._quote(self._table_name)} WHERE {self._quote(pk_name)} = ?",
-                (pk_val,)
-            )
-        self._db.commit()
-        self._total_count = self._db.table_row_count(self._table_name)
-        self._load_page()
+        self._busy = True
+        self._set_controls_enabled(False)
+        self.delete_requested.emit(self._table_name, pk_name, pk_values)
 
     def _add_row(self) -> None:
         """Insert a new row with all-NULL values into the table."""
-        if not self._prompt_discard_or_abort():
+        if not self._prompt_discard_or_abort() or self._busy:
             return
-        cols = ", ".join(self._quote(c.name) for c in self._columns)
-        placeholders = ", ".join("?" for _ in self._columns)
-        values = [None for _ in self._columns]
-        try:
-            self._db.execute(
-                f"INSERT INTO {self._quote(self._table_name)} ({cols}) VALUES ({placeholders})",
-                tuple(values),
-            )
-            self._db.commit()
-            self._total_count = self._db.table_row_count(self._table_name)
-            self._load_page()
-        except Exception as e:
-            QMessageBox.warning(self, "Error", str(e))
+        self._busy = True
+        self._set_controls_enabled(False)
+        self.add_row_requested.emit(self._table_name, self._columns)
 
     def record_edit(self, row: int, col_idx: int) -> None:
         """Record a pending cell edit without persisting.
@@ -439,25 +462,20 @@ class DataBrowser(QWidget):
         self._commit_btn.setEnabled(True)
 
     def _commit_changes(self) -> None:
-        """Persist all pending edits to the database in a single transaction."""
-        if not self._pending_edits:
+        """Persist all pending edits via the worker thread."""
+        if not self._pending_edits or self._busy:
             return
         pk_cols = [c for c in self._columns if c.primary_key]
         pk_name = pk_cols[0].name if pk_cols else None
         if pk_name is None:
             return
-        table = self._quote(self._table_name)
-        pk_q = self._quote(pk_name)
-        try:
-            for (pk_val, col_name), new_val in list(self._pending_edits.items()):
-                self._db.execute(
-                    f"UPDATE {table} SET {self._quote(col_name)} = ? WHERE {pk_q} = ?",
-                    (new_val, pk_val),
-                )
-            self._db.commit()
-        except Exception:
-            pass
-        self._discard_pending_edits()
+        pending = [
+            (pk_val, col_name, new_val)
+            for (pk_val, col_name), new_val in self._pending_edits.items()
+        ]
+        self._busy = True
+        self._commit_btn.setEnabled(False)
+        self.commit_requested.emit(self._table_name, self._columns, pending)
 
     def _discard_pending_edits(self) -> None:
         """Clear pending edits and disable the commit button."""
@@ -482,6 +500,18 @@ class DataBrowser(QWidget):
             return False
         self._discard_pending_edits()
         return True
+
+    def _on_action_done(self, table_name: str) -> None:
+        """Handle completion of a write action (commit, add, delete)."""
+        if table_name != self._table_name:
+            return
+        self._request_page()
+
+    def _on_worker_error(self, message: str) -> None:
+        """Handle an error emitted by the worker."""
+        self._busy = False
+        self._set_controls_enabled(True)
+        QMessageBox.warning(self, "Database Error", message)
 
     def _export_data(self) -> None:
         """Open the export dialog for the current page of data."""
