@@ -291,7 +291,23 @@ def _arrow_head(draw: ImageDraw, x: float, y: float, angle: float, size: int = 5
     ], fill=FK_COLOR)
 
 
-def render_er_diagram(tables: list[ErTable], output_path: str) -> str:
+def render_er_diagram(
+    tables: list[ErTable],
+    output_path: str,
+    scale: int = 2,
+) -> str:
+    """Render a list of ``ErTable`` objects to a PNG image.
+
+    Args:
+        tables: Tables to render (result of ``collect_schema``).
+        output_path: Path where the PNG file will be written.
+        scale: Render at ``scale``× resolution then downscale for
+            anti-aliasing (default 2).  Higher values give smoother
+            edges at the cost of more memory.
+
+    Returns:
+        ``output_path`` on success.
+    """
     tables = _layout_tables(tables)
 
     if not tables:
@@ -301,15 +317,17 @@ def render_er_diagram(tables: list[ErTable], output_path: str) -> str:
         img.save(output_path)
         return output_path
 
+    S = scale
     max_x = max(t.x + t.width for t in tables) + CANVAS_PAD
     max_y = max(t.y + t.height for t in tables) + CANVAS_PAD
-    img = Image.new("RGB", (max_x, max_y), "white")
+
+    img = Image.new("RGB", (max_x * S, max_y * S), "white")
     draw = ImageDraw.Draw(img)
 
-    font = ImageFont.truetype(FONT_PATH, 10)
-    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 10)
-    font_small = ImageFont.truetype(FONT_PATH, 9)
-    font_tiny = ImageFont.truetype(FONT_PATH, 7)
+    font = ImageFont.truetype(FONT_PATH, 10 * S)
+    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 10 * S)
+    font_small = ImageFont.truetype(FONT_PATH, 9 * S)
+    font_tiny = ImageFont.truetype(FONT_PATH, 7 * S)
 
     table_map = {t.name: t for t in tables}
 
@@ -330,72 +348,80 @@ def render_er_diagram(tables: list[ErTable], output_path: str) -> str:
             src_y = src.y + src.height / 2 + off * 8 - 4
             dst_y = dst.y + dst.height / 2 + off * 8 - 4
 
-            sx = src.x + src.width
-            sy = src_y
-            ex = dst.x
-            ey = dst_y
+            sx = (src.x + src.width) * S
+            sy = src_y * S
+            ex = dst.x * S
+            ey = dst_y * S
 
             edges.append((sx, sy, ex, ey, fk.from_col, fk.to_col))
 
     # Draw edges
     for sx, sy, ex, ey, fc, tc in edges:
         gap = abs(ex - sx)
-        if gap < 10:
-            gap = 10
+        if gap < 10 * S:
+            gap = 10 * S
         cp1 = (sx + gap * 0.3, sy)
         cp2 = (ex - gap * 0.3, ey)
-        pts = _cubic_bezier((sx, sy), cp1, cp2, (ex, ey))
-        draw.line(pts, fill=FK_COLOR, width=1)
+        pts = _cubic_bezier((sx, sy), cp1, cp2, (ex, ey), steps=30 * S)
+        draw.line(pts, fill=FK_COLOR, width=max(1, S // 2))
         angle = math.atan2(ey - sy, ex - sx)
-        _arrow_head(draw, ex, ey, angle)
+        _arrow_head(draw, ex, ey, angle, size=5 * S)
 
         mid = len(pts) // 2
         label = f"{fc} → {tc}"
-        lw = int(font_tiny.getlength(label)) + 4
+        lw = int(font_tiny.getlength(label)) + 4 * S
         lx = pts[mid][0] - lw // 2
-        ly = pts[mid][1] - 8
+        ly = pts[mid][1] - 8 * S
         draw.rectangle(
-            [(lx, ly - 1), (lx + lw, ly + 8)],
+            [(lx, ly - S), (lx + lw, ly + 8 * S)],
             fill="white", outline=FK_COLOR,
         )
-        draw.text((lx + 2, ly), label, fill=FK_COLOR, font=font_tiny)
+        draw.text((lx + 2 * S, ly), label, fill=FK_COLOR, font=font_tiny)
 
     # Draw tables
     for t in tables:
+        tx = t.x * S
+        ty = t.y * S
+        tw = t.width * S
+        th = t.height * S
+
         draw.rounded_rectangle(
-            [(t.x, t.y), (t.x + t.width, t.y + HEADER_HEIGHT)],
-            radius=4, fill=HEADER_BG,
+            [(tx, ty), (tx + tw, ty + HEADER_HEIGHT * S)],
+            radius=4 * S, fill=HEADER_BG,
         )
         draw.text(
-            (t.x + PADDING_X, t.y + 5),
+            (tx + PADDING_X * S, ty + 5 * S),
             t.name, fill=HEADER_FG, font=font_bold,
         )
 
-        yo = t.y + HEADER_HEIGHT
+        yo = ty + HEADER_HEIGHT * S
+        row_h = COLUMN_HEIGHT * S
         for i, c in enumerate(t.columns):
             bg = COLUMN_BG_ALT if i % 2 else COLUMN_BG
-            draw.rectangle(
-                [(t.x, yo), (t.x + t.width, yo + COLUMN_HEIGHT)],
-                fill=bg,
-            )
+            draw.rectangle([(tx, yo), (tx + tw, yo + row_h)], fill=bg)
 
-            px = t.x + 3
+            px = tx + 3 * S
             if c.is_pk:
-                draw.text((px, yo + 2), "PK", fill=PK_COLOR, font=font_bold)
+                draw.text((px, yo + 2 * S), "PK", fill=PK_COLOR, font=font_bold)
             elif c.is_fk:
-                draw.text((px, yo + 2), "FK", fill=FK_COLOR, font=font_bold)
+                draw.text((px, yo + 2 * S), "FK", fill=FK_COLOR, font=font_bold)
 
             draw.text(
-                (t.x + 22, yo + 2),
+                (tx + 22 * S, yo + 2 * S),
                 f"{c.name}  {c.col_type}",
                 fill=TEXT_COLOR, font=font_small,
             )
-            yo += COLUMN_HEIGHT
+            yo += row_h
 
         draw.rounded_rectangle(
-            [(t.x, t.y), (t.x + t.width, t.y + t.height)],
-            radius=4, outline=BORDER_COLOR, width=1,
+            [(tx, ty), (tx + tw, ty + th)],
+            radius=4 * S, outline=BORDER_COLOR, width=max(1, S // 2),
         )
+
+    if S > 1:
+        ow = max_x
+        oh = max_y
+        img = img.resize((ow, oh), Image.LANCZOS)
 
     img.save(output_path)
     return output_path
