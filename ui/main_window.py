@@ -21,7 +21,6 @@ from chat.agent import (
     RouterChatAgent,
     DEFAULT_CHAT_MODEL,
     DEFAULT_SQL_MODEL,
-    DEFAULT_ROUTER_MODEL,
 )
 from resources.style import THEMES
 
@@ -35,7 +34,7 @@ class MainWindow(QMainWindow):
     _open_worker_db = pyqtSignal(str)
     _close_worker_db = pyqtSignal()
     _chat_set_db = pyqtSignal(str)
-    _chat_set_models = pyqtSignal(str, str, str)
+    _chat_set_models = pyqtSignal(str, str)
     _chat_load_history = pyqtSignal()
 
     def __init__(self):
@@ -61,15 +60,11 @@ class MainWindow(QMainWindow):
         self._sql_model = self._settings.value(
             "sql_model", DEFAULT_SQL_MODEL, type=str
         )
-        self._router_model = self._settings.value(
-            "router_model", DEFAULT_ROUTER_MODEL, type=str
-        )
         self._chat_thread = QThread()
         self._chat_worker = ChatWorker(
             RouterChatAgent(
                 chat_model=self._chat_model,
                 sql_model=self._sql_model,
-                router_model=self._router_model,
             )
         )
         self._chat_worker.moveToThread(self._chat_thread)
@@ -204,10 +199,6 @@ class MainWindow(QMainWindow):
         sql_edit.setPlaceholderText("e.g. HuggingFaceH4/zephyr-7b-beta")
         form.addRow("SQL model:", sql_edit)
 
-        router_edit = QLineEdit(self._router_model)
-        router_edit.setPlaceholderText("e.g. microsoft/Phi-3-mini-4k-instruct")
-        form.addRow("Router model:", router_edit)
-
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -222,18 +213,15 @@ class MainWindow(QMainWindow):
 
         chat = chat_edit.text().strip()
         sql = sql_edit.text().strip()
-        router = router_edit.text().strip()
 
-        if not chat or not sql or not router:
+        if not chat or not sql:
             return
 
         self._chat_model = chat
         self._sql_model = sql
-        self._router_model = router
         self._settings.setValue("chat_model", chat)
         self._settings.setValue("sql_model", sql)
-        self._settings.setValue("router_model", router)
-        self._chat_set_models.emit(chat, sql, router)
+        self._chat_set_models.emit(chat, sql)
 
     def _setup_status_bar(self):
         """Create the status bar with a connection state label."""

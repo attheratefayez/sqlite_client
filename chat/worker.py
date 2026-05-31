@@ -27,8 +27,8 @@ class ChatWorker(QObject):
     def set_database_path(self, path: str) -> None:
         self._agent.set_database_path(path if path else None)
 
-    def set_models(self, chat_model: str, sql_model: str, router_model: str) -> None:
-        self._agent.set_models(chat_model, sql_model, router_model)
+    def set_models(self, chat_model: str, sql_model: str) -> None:
+        self._agent.set_models(chat_model, sql_model)
 
     def load_history(self) -> None:
         self.history_loaded.emit(self._agent.get_history())

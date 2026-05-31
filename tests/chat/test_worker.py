@@ -27,12 +27,11 @@ class TestChatWorker:
         worker.moveToThread(thread)
         thread.start()
 
-        worker.set_models(chat_model="c", sql_model="s", router_model="r")
+        worker.set_models(chat_model="c", sql_model="s")
         thread.quit()
         thread.wait(3000)
         assert agent.chat_agent._model == "c"
         assert agent.sql_agent._model == "s"
-        assert agent.router._model == "r"
 
     def test_load_history_emits_signal(self, qtbot):
         agent = DemoAgent()

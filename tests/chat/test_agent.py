@@ -9,7 +9,6 @@ from chat.agent import (
     RouterChatAgent,
     DEFAULT_CHAT_MODEL,
     DEFAULT_SQL_MODEL,
-    DEFAULT_ROUTER_MODEL,
 )
 
 
@@ -61,19 +60,23 @@ class TestDemoAgent:
 
 
 class TestRouterAgent:
-    def test_classify_falls_back_to_chat_when_no_llm(self):
-        agent = RouterAgent("nonexistent/model")
-        assert agent.classify("hello") == "chat"
+    def test_employee_is_sql(self):
+        assert RouterAgent.classify("do we have an employee Nancy?") == "sql"
 
-    def test_classify_handles_empty_message(self):
-        agent = RouterAgent("nonexistent/model")
-        assert agent.classify("") == "chat"
+    def test_table_is_sql(self):
+        assert RouterAgent.classify("check the employees table") == "sql"
 
-    def test_set_model_updates(self):
-        agent = RouterAgent()
-        assert agent._model == DEFAULT_ROUTER_MODEL
-        agent.set_model("mistralai/Mistral-7B-Instruct-v0.3")
-        assert agent._model == "mistralai/Mistral-7B-Instruct-v0.3"
+    def test_hello_is_chat(self):
+        assert RouterAgent.classify("hello") == "chat"
+
+    def test_how_are_you_is_chat(self):
+        assert RouterAgent.classify("how are you?") == "chat"
+
+    def test_user_records_is_sql(self):
+        assert RouterAgent.classify("how many users are there?") == "sql"
+
+    def test_empty_message_is_chat(self):
+        assert RouterAgent.classify("") == "chat"
 
 
 class TestGeneralChatAgent:
@@ -134,25 +137,21 @@ class TestRouterChatAgent:
         agent = RouterChatAgent()
         assert agent.chat_agent._model == DEFAULT_CHAT_MODEL
         assert agent.sql_agent._model == DEFAULT_SQL_MODEL
-        assert agent.router._model == DEFAULT_ROUTER_MODEL
 
     def test_set_models_updates_sub_agents(self):
         agent = RouterChatAgent()
         agent.set_models(
             chat_model="chat/m",
             sql_model="sql/m",
-            router_model="router/m",
         )
         assert agent.chat_agent._model == "chat/m"
         assert agent.sql_agent._model == "sql/m"
-        assert agent.router._model == "router/m"
 
     def test_partial_set_models(self):
         agent = RouterChatAgent()
         agent.set_models(chat_model="chat/m")
         assert agent.chat_agent._model == "chat/m"
         assert agent.sql_agent._model == DEFAULT_SQL_MODEL
-        assert agent.router._model == DEFAULT_ROUTER_MODEL
 
     def test_persists_messages(self, tmp_path):
         store_path = tmp_path / "chat.db"

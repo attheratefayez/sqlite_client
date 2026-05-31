@@ -11,7 +11,6 @@ load_dotenv()
 
 DEFAULT_CHAT_MODEL = "HuggingFaceH4/zephyr-7b-beta"
 DEFAULT_SQL_MODEL = "HuggingFaceH4/zephyr-7b-beta"
-DEFAULT_ROUTER_MODEL = "microsoft/Phi-3-mini-4k-instruct"
 
 MODEL_NOT_SUPPORTED_HINT = (
     "The model '{model}' is not available on the HuggingFace Inference API. "
@@ -48,15 +47,6 @@ I ran your SQL query and got these results:
 {results}
 
 Now answer the user's original question in plain language, based on these results."""
-
-ROUTER_SYSTEM_PROMPT = """\
-Classify the user's message as "chat" or "sql".
-
-"sql" = asking about database data, tables, records, counts, or
-        anything that requires a SQL query to answer.
-"chat" = greetings, how-are-you, jokes, opinions, general conversation.
-
-Reply with exactly one word: "chat" or "sql"."""
 
 
 # ------------------------------------------------------------------
@@ -110,12 +100,7 @@ class DemoAgent(ChatAgent):
 # ------------------------------------------------------------------
 
 class RouterAgent:
-    """Classifies a user message as ``"chat"`` or ``"sql"``.
-
-    Uses a keyword fast-path first.  If the message contains table/field
-    names or DB-related terms it returns ``"sql"`` immediately.  Only
-    ambiguous messages are sent to the LLM classifier.
-    """
+    """Classifies a user message as ``"chat"`` or ``"sql"`` via keywords."""
 
     _SQL_KEYWORDS = frozenset({
         "table", "tables", "database", "databases",
@@ -128,33 +113,10 @@ class RouterAgent:
         "count", "sum", "avg", "total",
     })
 
-    def __init__(self, model: str = DEFAULT_ROUTER_MODEL):
-        self._model = model
-        self._llm: object | None = None
-        self._error: str | None = None
-        self._setup()
-
-    def _setup(self) -> None:
-        self._llm = None
-        self._error = None
-        try:
-            self._llm = _make_llm(self._model)
-        except Exception as exc:
-            self._error = f"Router init failed: {exc}"
-
-    def set_model(self, model: str) -> None:
-        self._model = model
-        self._setup()
-
-    def classify(self, message: str) -> str:
+    @classmethod
+    def classify(cls, message: str) -> str:
         msg_lower = message.lower()
-
-        if any(kw in msg_lower for kw in self._SQL_KEYWORDS):
-            return "sql"
-
-        if self._llm is None:
-            return "chat"
-        from langchain_core.messages import HumanMessage, SystemMessage
+        return "sql" if any(kw in msg_lower for kw in cls._SQL_KEYWORDS) else "chat"
 
         try:
             response = self._llm.invoke([
@@ -329,14 +291,13 @@ class RouterChatAgent(ChatAgent):
 
     Owns the conversation store and persistence.  Delegates
     conversation to ``GeneralChatAgent`` and database questions to
-    ``SqlAgent`` after classification by ``RouterAgent``.
+    ``SqlAgent`` after keyword-based classification by ``RouterAgent``.
     """
 
     def __init__(
         self,
         chat_model: str = DEFAULT_CHAT_MODEL,
         sql_model: str = DEFAULT_SQL_MODEL,
-        router_model: str = DEFAULT_ROUTER_MODEL,
         db_path: str | None = None,
         chat_store_path: str | None = None,
     ):
@@ -344,15 +305,10 @@ class RouterChatAgent(ChatAgent):
         self._store = ChatStore(chat_store_path)
         self._conversation_id = self._store.create_conversation()
 
-        self._router = RouterAgent(router_model)
         self._chat_agent = GeneralChatAgent(chat_model)
         self._sql_agent = SqlAgent(db_path, sql_model)
 
-    # -- sub-agent accessors (for worker to forward model changes) ----------
-
-    @property
-    def router(self) -> RouterAgent:
-        return self._router
+    # -- sub-agent accessors -----------------------------------------------
 
     @property
     def chat_agent(self) -> GeneralChatAgent:
@@ -367,7 +323,7 @@ class RouterChatAgent(ChatAgent):
     def answer(self, message: str) -> str:
         self._store.add_message(self._conversation_id, "user", message)
 
-        category = self._router.classify(message)
+        category = RouterAgent.classify(message)
 
         try:
             if category == "sql":
@@ -395,11 +351,8 @@ class RouterChatAgent(ChatAgent):
         self,
         chat_model: str | None = None,
         sql_model: str | None = None,
-        router_model: str | None = None,
     ) -> None:
         if chat_model is not None:
             self._chat_agent.set_model(chat_model)
         if sql_model is not None:
             self._sql_agent.set_model(sql_model)
-        if router_model is not None:
-            self._router.set_model(router_model)
