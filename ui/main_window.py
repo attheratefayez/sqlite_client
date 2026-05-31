@@ -1,23 +1,23 @@
-"""Main application window for the SQLite Client.
-
-Provides the top-level :class:`MainWindow` with menu bar, schema browser,
-query editor, status bar, and data browser tab management.
-"""
+"""Main application window for the SQLite Client."""
 
 import pathlib
 
 from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
-    QStatusBar, QMessageBox, QLabel
+    QStatusBar, QMessageBox, QLabel, QDockWidget,
 )
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction
 
 from core.database import DatabaseConnection
+from core.worker import DatabaseWorker
 from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
 from ui.connection_dialog import ConnectionDialog
 from ui.data_browser import DataBrowser
+from chat.chat_panel import ChatPanel
+from chat.worker import ChatWorker
+from chat.agent import LangChainAgent
 from resources.style import THEMES
 
 
@@ -25,12 +25,12 @@ RECENT_FILES_MAX = 10
 
 
 class MainWindow(QMainWindow):
-    """Main application window coordinating all UI components.
+    """Main application window coordinating all UI components."""
 
-    Manages database connections, the schema tree, query tabs, and
-    data browser tabs. Persists a list of recently opened files using
-    QSettings.
-    """
+    _open_worker_db = pyqtSignal(str)
+    _close_worker_db = pyqtSignal()
+    _chat_set_db = pyqtSignal(str)
+    _chat_load_history = pyqtSignal()
 
     def __init__(self):
         """Initialize the main window, menus, UI layout, and status bar."""
@@ -40,14 +40,36 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self._settings = QSettings("sqlite-client", "sqlite-client")
+
+        self._worker_thread = QThread()
+        self._worker = DatabaseWorker()
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.start()
+
+        self._open_worker_db.connect(self._worker.open_database)
+        self._close_worker_db.connect(self._worker.close_database)
+
+        self._chat_thread = QThread()
+        self._chat_worker = ChatWorker(LangChainAgent())
+        self._chat_worker.moveToThread(self._chat_thread)
+        self._chat_thread.start()
+
+        self._chat_set_db.connect(self._chat_worker.set_database_path)
+        self._chat_load_history.connect(self._chat_worker.load_history)
+
         self._setup_menu()
         self._setup_ui()
+        self._setup_chat_dock()
         self._setup_status_bar()
         self._apply_saved_theme()
+
+        self._chat_worker.history_loaded.connect(self._chat_panel.load_history)
+        QTimer.singleShot(0, self._chat_load_history.emit)
+
         self._load_last_database()
 
     def _setup_menu(self):
-        """Construct the menu bar with File and Help menus."""
+        """Construct the menu bar with File, View, and Help menus."""
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("&File")
@@ -73,9 +95,17 @@ class MainWindow(QMainWindow):
         view_menu = menubar.addMenu("&View")
         self._dark_mode_action = QAction("&Dark Mode", self)
         self._dark_mode_action.setCheckable(True)
-        self._dark_mode_action.setChecked(self._settings.value("dark_mode", False, type=bool))
+        self._dark_mode_action.setChecked(
+            self._settings.value("dark_mode", False, type=bool)
+        )
         self._dark_mode_action.triggered.connect(self._on_toggle_theme)
         view_menu.addAction(self._dark_mode_action)
+        view_menu.addSeparator()
+        self._chat_action = QAction("&Chat", self)
+        self._chat_action.setCheckable(True)
+        self._chat_action.setChecked(True)
+        self._chat_action.triggered.connect(self._on_toggle_chat)
+        view_menu.addAction(self._chat_action)
 
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -97,6 +127,12 @@ class MainWindow(QMainWindow):
         self._right_tabs.tabCloseRequested.connect(self._on_right_tab_close)
 
         self._query_editor = QueryEditorWidget()
+        self._query_editor.execute_query_requested.connect(
+            self._worker.request_query
+        )
+        self._worker.query_finished.connect(
+            self._query_editor._on_query_result
+        )
         self._right_tabs.addTab(self._query_editor, "Query")
 
         self._splitter.addWidget(self._right_tabs)
@@ -104,6 +140,27 @@ class MainWindow(QMainWindow):
         self._splitter.setSizes([250, 950])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
+
+    def _setup_chat_dock(self):
+        """Create the collapsible chat dock widget on the right side."""
+        self._chat_dock = QDockWidget("Chat", self)
+        self._chat_dock.setObjectName("chat_dock")
+        self._chat_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+        )
+        self._chat_panel = ChatPanel()
+        self._chat_dock.setWidget(self._chat_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._chat_dock)
+
+        self._chat_panel.message_sent.connect(self._chat_worker.send_message)
+        self._chat_worker.response_received.connect(
+            self._chat_panel.append_reply
+        )
+        self._chat_dock.visibilityChanged.connect(self._chat_action.setChecked)
+
+    def _on_toggle_chat(self, visible: bool) -> None:
+        self._chat_dock.setVisible(visible)
 
     def _setup_status_bar(self):
         """Create the status bar with a connection state label."""
@@ -113,21 +170,9 @@ class MainWindow(QMainWindow):
         self._status_bar.addPermanentWidget(self._status_label)
 
     def _recent_files(self) -> list[str]:
-        """Return the list of recently opened database file paths.
-
-        Returns:
-            List of file path strings from QSettings.
-        """
         return self._settings.value("recent_files", [])
 
     def _add_recent_file(self, path: str) -> None:
-        """Add a file path to the top of the recent files list.
-
-        Duplicates are removed and the list is capped at RECENT_FILES_MAX.
-
-        Args:
-            path: File path to add.
-        """
         files = self._recent_files()
         if path in files:
             files.remove(path)
@@ -135,19 +180,13 @@ class MainWindow(QMainWindow):
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
     def _connect_database(self, path: str) -> bool:
-        """Open a database and wire it into all UI components.
-
-        Args:
-            path: Path to the SQLite database file.
-
-        Returns:
-            True if the connection succeeded, False otherwise.
-        """
         try:
             self._db.close()
             self._db.connect(path)
+            self._open_worker_db.emit(path)
+            self._chat_set_db.emit(path)
             self._schema_browser.set_database(self._db)
-            self._query_editor.set_database(self._db)
+            self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
             self._add_recent_file(path)
             self._settings.setValue("last_database", path)
@@ -158,7 +197,6 @@ class MainWindow(QMainWindow):
             return False
 
     def _on_open_database(self):
-        """Show the connection dialog and open the selected database."""
         dlg = ConnectionDialog(recent_files=self._recent_files(), parent=self)
         if dlg.exec() != ConnectionDialog.DialogCode.Accepted:
             return
@@ -167,100 +205,82 @@ class MainWindow(QMainWindow):
             self._connect_database(path)
 
     def _load_last_database(self) -> None:
-        """Reopen the database that was open when the app was last closed."""
         path = self._settings.value("last_database", "")
         if not path or not pathlib.Path(path).exists():
             return
         try:
             self._db.connect(path)
+            self._open_worker_db.emit(path)
+            self._chat_set_db.emit(path)
             self._schema_browser.set_database(self._db)
-            self._query_editor.set_database(self._db)
+            self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
             self._status_label.setText(f"Connected: {self._db.path}")
         except Exception:
             pass
 
     def _on_close_database(self):
-        """Close the current database and reset all UI components."""
+        self._close_worker_db.emit()
+        self._chat_set_db.emit("")
         self._db.close()
         self._schema_browser.set_database(None)
-        self._query_editor.set_database(None)
+        self._query_editor.set_connected(False)
         self._close_action.setEnabled(False)
         self._status_label.setText("No database open")
 
     def _on_table_selected(self, table_name: str) -> None:
-        """Open a data browser tab for the selected table.
-
-        Args:
-            table_name: Name of the table to browse.
-        """
         self._open_data_browser(table_name)
 
     def _on_view_selected(self, view_name: str) -> None:
-        """Populate a new query tab with a SELECT * statement for the view.
-
-        Args:
-            view_name: Name of the view.
-        """
         tab = self._query_editor.add_tab()
         tab.editor.setPlainText(f"SELECT * FROM \"{view_name}\"\n")
 
     def _open_data_browser(self, table_name: str) -> None:
-        """Open or switch to a data browser tab for the given table.
-
-        If a tab for the table already exists, it is brought to the front.
-
-        Args:
-            table_name: Name of the table to browse.
-        """
         for i in range(self._right_tabs.count()):
             w = self._right_tabs.widget(i)
             if hasattr(w, '_table_name') and w._table_name == table_name:
                 self._right_tabs.setCurrentIndex(i)
                 return
-        browser = DataBrowser(self._db, table_name)
+        columns = self._db.table_schema(table_name)
+        total_count = self._db.table_row_count(table_name)
+        browser = DataBrowser(self._worker, table_name, columns, total_count)
         idx = self._right_tabs.addTab(browser, table_name)
         self._right_tabs.setCurrentIndex(idx)
 
     def _on_right_tab_close(self, index: int) -> None:
-        """Close a right-side tab, except the query editor tab.
-
-        Args:
-            index: Index of the tab to close.
-        """
         w = self._right_tabs.widget(index)
         if w is self._query_editor:
             return
         self._right_tabs.removeTab(index)
 
     def _set_theme(self, dark: bool) -> None:
-        """Apply the given theme without persisting or updating the action."""
         app = QApplication.instance()
         if app:
             app.setStyleSheet(THEMES["dark" if dark else "light"])
 
     def _apply_saved_theme(self) -> None:
-        """Apply the theme from saved settings at startup."""
         dark = self._settings.value("dark_mode", False, type=bool)
         self._dark_mode_action.setChecked(dark)
         self._set_theme(dark)
 
     def _on_toggle_theme(self) -> None:
-        """Toggle between light and dark theme."""
         dark = self._dark_mode_action.isChecked()
         self._set_theme(dark)
         self._settings.setValue("dark_mode", dark)
 
     def _on_about(self):
-        """Show the About dialog."""
-        QMessageBox.about(self, "About SQLite Client",
-                          "SQLite Client v0.1.0\n\nA PyQt6-based SQLite database browser.")
+        QMessageBox.about(
+            self,
+            "About SQLite Client",
+            "SQLite Client v0.1.0\n\nA PyQt6-based SQLite database browser.",
+        )
 
     def closeEvent(self, event):
-        """Close the database connection before shutting down.
-
-        Args:
-            event: The close event.
-        """
+        self._close_worker_db.emit()
+        self._worker_thread.quit()
+        self._worker_thread.wait(3000)
+        self._chat_worker.close_store()
+        self._chat_thread.quit()
+        self._chat_thread.wait(3000)
         self._db.close()
         super().closeEvent(event)

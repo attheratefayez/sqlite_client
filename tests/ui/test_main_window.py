@@ -46,7 +46,7 @@ class TestMainWindow:
     def test_open_database(self, window, qtbot, sample_db_path):
         window._db.connect(sample_db_path)
         window._schema_browser.set_database(window._db)
-        window._query_editor.set_database(window._db)
+        window._query_editor.set_connected(True)
         window._close_action.setEnabled(True)
         window._status_label.setText(f"Connected: {window._db.path}")
 
