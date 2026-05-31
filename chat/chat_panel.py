@@ -17,6 +17,7 @@ class ChatPanel(QWidget):
     """
 
     message_sent = pyqtSignal(str)
+    clear_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +44,11 @@ class ChatPanel(QWidget):
         self._send_btn.clicked.connect(self._on_send)
         input_layout.addWidget(self._send_btn)
 
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setToolTip("Clear conversation history")
+        self._clear_btn.clicked.connect(self._on_clear)
+        input_layout.addWidget(self._clear_btn)
+
         layout.addLayout(input_layout)
 
     def load_history(self, messages: list[tuple[str, str]]) -> None:
@@ -57,6 +63,17 @@ class ChatPanel(QWidget):
         self._input.clear()
         self._append_message("You", text)
         self.message_sent.emit(text)
+
+    def _on_clear(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Clear History",
+            "Clear all messages in this conversation?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._history.clear()
+            self.clear_requested.emit()
 
     def append_reply(self, user_message: str, reply: str) -> None:
         self._append_message("Agent", reply)

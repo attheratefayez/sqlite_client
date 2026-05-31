@@ -31,6 +31,10 @@ class ChatWorker(QObject):
     def set_models(self, chat_model: str, sql_model: str) -> None:
         self._agent.set_models(chat_model, sql_model)
 
+    def clear_history(self) -> None:
+        self._agent.clear_history()
+        self.history_loaded.emit([])
+
     def load_history(self) -> None:
         self.history_loaded.emit(self._agent.get_history())
 

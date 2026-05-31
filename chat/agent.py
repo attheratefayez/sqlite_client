@@ -384,6 +384,9 @@ class RouterChatAgent(ChatAgent):
         self._sql_agent.set_database_path(path)
         self._conversation_id = self._store.get_or_create_conversation(path or "")
 
+    def clear_history(self) -> None:
+        self._store.clear_conversation(self._conversation_id)
+
     def get_history(self) -> list[tuple[str, str]]:
         msgs = self._store.get_messages(self._conversation_id)
         return [(m["role"], m["content"]) for m in msgs]

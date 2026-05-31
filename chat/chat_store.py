@@ -132,5 +132,13 @@ class ChatStore:
             for r in rows
         ]
 
+    def clear_conversation(self, conversation_id: int) -> None:
+        """Delete all messages in a conversation."""
+        self._conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

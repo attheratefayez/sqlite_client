@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._chat_dock)
 
         self._chat_panel.message_sent.connect(self._chat_worker.send_message)
+        self._chat_panel.clear_requested.connect(self._chat_worker.clear_history)
         self._chat_worker.response_received.connect(
             self._chat_panel.append_reply
         )
