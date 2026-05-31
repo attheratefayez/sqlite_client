@@ -8,3 +8,4 @@ wheels/
 uv.lock
 test_db/
 .pytest_cache/
+chat_history.db
