@@ -129,6 +129,12 @@ class MainWindow(QMainWindow):
         self._chat_model_action.triggered.connect(self._on_configure_models)
         view_menu.addAction(self._chat_model_action)
 
+        view_menu.addSeparator()
+        self._er_action = QAction("ER &Diagram", self)
+        self._er_action.setEnabled(False)
+        self._er_action.triggered.connect(self._on_er_diagram)
+        view_menu.addAction(self._er_action)
+
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
@@ -142,6 +148,7 @@ class MainWindow(QMainWindow):
         self._schema_browser = SchemaBrowser()
         self._schema_browser.table_selected.connect(self._on_table_selected)
         self._schema_browser.view_selected.connect(self._on_view_selected)
+        self._schema_browser.er_diagram_requested.connect(self._on_er_diagram_for_table)
         self._splitter.addWidget(self._schema_browser)
 
         self._right_tabs = QTabWidget()
@@ -251,6 +258,7 @@ class MainWindow(QMainWindow):
             self._schema_browser.set_database(self._db)
             self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
+            self._er_action.setEnabled(True)
             self._add_recent_file(path)
             self._settings.setValue("last_database", path)
             self._status_label.setText(f"Connected: {self._db.path}")
@@ -278,6 +286,7 @@ class MainWindow(QMainWindow):
             self._schema_browser.set_database(self._db)
             self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
+            self._er_action.setEnabled(True)
             self._status_label.setText(f"Connected: {self._db.path}")
         except Exception:
             pass
@@ -289,7 +298,18 @@ class MainWindow(QMainWindow):
         self._schema_browser.set_database(None)
         self._query_editor.set_connected(False)
         self._close_action.setEnabled(False)
+        self._er_action.setEnabled(False)
         self._status_label.setText("No database open")
+
+    def _on_er_diagram(self):
+        from ui.er_dialog import ErDialog
+        dlg = ErDialog(self, db_conn=self._db)
+        dlg.exec()
+
+    def _on_er_diagram_for_table(self, table_name: str):
+        from ui.er_dialog import ErDialog
+        dlg = ErDialog(self, db_conn=self._db, table_name=table_name)
+        dlg.exec()
 
     def _on_table_selected(self, table_name: str) -> None:
         self._open_data_browser(table_name)

@@ -4,7 +4,7 @@ Provides a :class:`SchemaBrowser` widget that displays tables and views
 in a tree structure, with column details shown as child items.
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
 from PyQt6.QtCore import pyqtSignal, Qt
 from core.database import DatabaseConnection
 
@@ -19,6 +19,7 @@ class SchemaBrowser(QTreeWidget):
 
     table_selected = pyqtSignal(str)
     view_selected = pyqtSignal(str)
+    er_diagram_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         """Initialize the schema browser widget.
@@ -31,6 +32,8 @@ class SchemaBrowser(QTreeWidget):
         self.setHeaderHidden(True)
         self.setColumnCount(1)
         self.itemClicked.connect(self._on_item_clicked)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
     def set_database(self, db: DatabaseConnection | None) -> None:
         """Set the database connection and refresh the tree.
@@ -82,6 +85,19 @@ class SchemaBrowser(QTreeWidget):
         for view_name in self._db.views():
             view_item = QTreeWidgetItem(views_root, [view_name])
             view_item.setData(0, Qt.ItemDataRole.UserRole, ("view", view_name))
+
+    def _on_context_menu(self, pos):
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, tuple) or data[0] != "table":
+            return
+        table_name = data[1]
+        menu = QMenu(self)
+        action = menu.addAction(f"Show ER Diagram — {table_name}")
+        action.triggered.connect(lambda: self.er_diagram_requested.emit(table_name))
+        menu.exec(self.mapToGlobal(pos))
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """Handle item clicks and emit the appropriate signal.
