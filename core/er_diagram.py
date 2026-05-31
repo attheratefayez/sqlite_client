@@ -31,13 +31,13 @@ FK_COLOR = "#1565c0"
 PK_COLOR = "#e65100"
 TEXT_COLOR = "#333"
 
-COLUMN_HEIGHT = 20
-HEADER_HEIGHT = 28
-PADDING_X = 10
-CANVAS_PAD = 40
-COMPONENT_GAP = 60
-LAYER_GAP = 70
-TABLE_GAP = 16
+COLUMN_HEIGHT = 26
+HEADER_HEIGHT = 36
+PADDING_X = 14
+CANVAS_PAD = 50
+COMPONENT_GAP = 80
+LAYER_GAP = 90
+TABLE_GAP = 20
 
 
 @dataclass
@@ -234,12 +234,12 @@ def _layout_tables(tables: list[ErTable]) -> list[ErTable]:
     if not tables:
         return tables
 
-    font = ImageFont.truetype(FONT_PATH, 10)
-    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 10)
+    font = ImageFont.truetype(FONT_PATH, 14)
+    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 14)
 
     for t in tables:
         t.width = _table_width(t, font, font_bold)
-        t.height = HEADER_HEIGHT + len(t.columns) * COLUMN_HEIGHT + 4
+        t.height = HEADER_HEIGHT + len(t.columns) * COLUMN_HEIGHT + 8
 
     table_map = {t.name: t for t in tables}
 
@@ -294,7 +294,7 @@ def _arrow_head(draw: ImageDraw, x: float, y: float, angle: float, size: int = 5
 def render_er_diagram(
     tables: list[ErTable],
     output_path: str,
-    scale: int = 2,
+    scale: int = 3,
 ) -> str:
     """Render a list of ``ErTable`` objects to a PNG image.
 
@@ -324,10 +324,10 @@ def render_er_diagram(
     img = Image.new("RGB", (max_x * S, max_y * S), "white")
     draw = ImageDraw.Draw(img)
 
-    font = ImageFont.truetype(FONT_PATH, 10 * S)
-    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 10 * S)
-    font_small = ImageFont.truetype(FONT_PATH, 9 * S)
-    font_tiny = ImageFont.truetype(FONT_PATH, 7 * S)
+    font = ImageFont.truetype(FONT_PATH, 14 * S)
+    font_bold = ImageFont.truetype(FONT_BOLD_PATH, 14 * S)
+    font_small = ImageFont.truetype(FONT_PATH, 12 * S)
+    font_tiny = ImageFont.truetype(FONT_PATH, 10 * S)
 
     table_map = {t.name: t for t in tables}
 
@@ -423,7 +423,7 @@ def render_er_diagram(
         oh = max_y
         img = img.resize((ow, oh), Image.LANCZOS)
 
-    img.save(output_path)
+    img.save(output_path, dpi=(150, 150))
     return output_path
 
 
