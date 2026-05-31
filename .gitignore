@@ -11,3 +11,4 @@ test_db/
 chat_history.db
 chat_history.db-*
 reports/
+.env
