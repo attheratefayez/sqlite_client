@@ -17,7 +17,7 @@ from ui.connection_dialog import ConnectionDialog
 from ui.data_browser import DataBrowser
 from chat.chat_panel import ChatPanel
 from chat.worker import ChatWorker
-from chat.agent import LangChainAgent
+from chat.agent import LangChainAgent, DEFAULT_MODEL
 from resources.style import THEMES
 
 
@@ -30,6 +30,7 @@ class MainWindow(QMainWindow):
     _open_worker_db = pyqtSignal(str)
     _close_worker_db = pyqtSignal()
     _chat_set_db = pyqtSignal(str)
+    _chat_set_model = pyqtSignal(str)
     _chat_load_history = pyqtSignal()
 
     def __init__(self):
@@ -49,12 +50,16 @@ class MainWindow(QMainWindow):
         self._open_worker_db.connect(self._worker.open_database)
         self._close_worker_db.connect(self._worker.close_database)
 
+        self._chat_model = self._settings.value(
+            "chat_model", DEFAULT_MODEL, type=str
+        )
         self._chat_thread = QThread()
-        self._chat_worker = ChatWorker(LangChainAgent())
+        self._chat_worker = ChatWorker(LangChainAgent(model=self._chat_model))
         self._chat_worker.moveToThread(self._chat_thread)
         self._chat_thread.start()
 
         self._chat_set_db.connect(self._chat_worker.set_database_path)
+        self._chat_set_model.connect(self._chat_worker.set_model)
         self._chat_load_history.connect(self._chat_worker.load_history)
 
         self._setup_menu()
@@ -106,6 +111,10 @@ class MainWindow(QMainWindow):
         self._chat_action.setChecked(True)
         self._chat_action.triggered.connect(self._on_toggle_chat)
         view_menu.addAction(self._chat_action)
+
+        self._chat_model_action = QAction("Chat &Model...", self)
+        self._chat_model_action.triggered.connect(self._on_change_chat_model)
+        view_menu.addAction(self._chat_model_action)
 
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -161,6 +170,20 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_chat(self, visible: bool) -> None:
         self._chat_dock.setVisible(visible)
+
+    def _on_change_chat_model(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+
+        model, ok = QInputDialog.getText(
+            self, "Chat Model", "HuggingFace model ID:",
+            text=self._chat_model,
+        )
+        if not ok or not model.strip():
+            return
+        model = model.strip()
+        self._chat_model = model
+        self._settings.setValue("chat_model", model)
+        self._chat_set_model.emit(model)
 
     def _setup_status_bar(self):
         """Create the status bar with a connection state label."""
