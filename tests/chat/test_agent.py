@@ -1,8 +1,16 @@
 """Tests for the chat agent module."""
 
-import os
-
-from chat.agent import DemoAgent, ChatAgent, LangChainAgent, DEFAULT_MODEL
+from chat.agent import (
+    DemoAgent,
+    ChatAgent,
+    RouterAgent,
+    GeneralChatAgent,
+    SqlAgent,
+    RouterChatAgent,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_SQL_MODEL,
+    DEFAULT_ROUTER_MODEL,
+)
 
 
 class TestChatAgent:
@@ -52,52 +60,103 @@ class TestDemoAgent:
             assert agent.answer(msg) == "not yet implemented"
 
 
-class TestLangChainAgent:
-    def test_default_model_is_supported(self):
-        assert DEFAULT_MODEL == "HuggingFaceH4/zephyr-7b-beta"
-        agent = LangChainAgent()
-        assert agent._model == DEFAULT_MODEL
+class TestRouterAgent:
+    def test_classify_falls_back_to_chat_when_no_llm(self):
+        agent = RouterAgent("nonexistent/model")
+        assert agent.classify("hello") == "chat"
 
-    def test_set_model_updates_model(self, tmp_path):
-        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
+    def test_classify_handles_empty_message(self):
+        agent = RouterAgent("nonexistent/model")
+        assert agent.classify("") == "chat"
+
+    def test_set_model_updates(self):
+        agent = RouterAgent()
+        assert agent._model == DEFAULT_ROUTER_MODEL
         agent.set_model("mistralai/Mistral-7B-Instruct-v0.3")
         assert agent._model == "mistralai/Mistral-7B-Instruct-v0.3"
 
-    def test_no_database(self, tmp_path):
-        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
+
+class TestGeneralChatAgent:
+    def test_default_model(self):
+        agent = GeneralChatAgent()
+        assert agent._model == DEFAULT_CHAT_MODEL
+
+    def test_set_model_updates(self):
+        agent = GeneralChatAgent()
+        agent.set_model("mistralai/Mistral-7B-Instruct-v0.3")
+        assert agent._model == "mistralai/Mistral-7B-Instruct-v0.3"
+
+    def test_answer_no_llm(self):
+        agent = GeneralChatAgent("nonexistent/model")
+        result = agent.answer("hello")
+        assert "error" in result.lower()
+
+
+class TestSqlAgent:
+    def test_default_model(self):
+        agent = SqlAgent()
+        assert agent._model == DEFAULT_SQL_MODEL
+
+    def test_set_model_updates_model(self):
+        agent = SqlAgent()
+        agent.set_model("mistralai/Mistral-7B-Instruct-v0.3")
+        assert agent._model == "mistralai/Mistral-7B-Instruct-v0.3"
+
+    def test_no_database(self):
+        agent = SqlAgent()
         result = agent.answer("hello")
         assert "No database" in result
 
     def test_set_database_path_clears(self, tmp_path):
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(db_path="/tmp/test.db", chat_store_path=str(store_path))
+        agent = SqlAgent(db_path="/tmp/test.db")
         agent.set_database_path(None)
         result = agent.answer("hello")
         assert "No database" in result
 
-    def test_returns_error_on_unavailable(self, tmp_path):
-        db_path = tmp_path / "test.db"
-        db_path.write_text("")
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(
-            db_path=str(db_path), chat_store_path=str(store_path)
-        )
-        result = agent.answer("list tables")
-        assert (
-            "Cannot connect" in result
-            or "Failed to initialise" in result
-            or "Error" in result
-        )
+    def test_extract_sql_from_markdown(self):
+        text = "Here is the query:\n```sql\nSELECT * FROM users;\n```\n"
+        result = SqlAgent._extract_sql(text)
+        assert result == "SELECT * FROM users;"
 
-    def test_dotenv_loads_token(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HUGGINGFACEHUB_API_TOKEN", "test-token-from-env")
-        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
-        env_val = os.environ.get("HUGGINGFACEHUB_API_TOKEN")
-        assert env_val == "test-token-from-env"
+    def test_extract_sql_from_text(self):
+        text = "Let me check.\n```sql\nSELECT COUNT(*) FROM orders;\n```\nDone."
+        result = SqlAgent._extract_sql(text)
+        assert result == "SELECT COUNT(*) FROM orders;"
+
+    def test_extract_sql_none(self):
+        text = "Hello, how can I help you?"
+        result = SqlAgent._extract_sql(text)
+        assert result is None
+
+
+class TestRouterChatAgent:
+    def test_default_models(self):
+        agent = RouterChatAgent()
+        assert agent.chat_agent._model == DEFAULT_CHAT_MODEL
+        assert agent.sql_agent._model == DEFAULT_SQL_MODEL
+        assert agent.router._model == DEFAULT_ROUTER_MODEL
+
+    def test_set_models_updates_sub_agents(self):
+        agent = RouterChatAgent()
+        agent.set_models(
+            chat_model="chat/m",
+            sql_model="sql/m",
+            router_model="router/m",
+        )
+        assert agent.chat_agent._model == "chat/m"
+        assert agent.sql_agent._model == "sql/m"
+        assert agent.router._model == "router/m"
+
+    def test_partial_set_models(self):
+        agent = RouterChatAgent()
+        agent.set_models(chat_model="chat/m")
+        assert agent.chat_agent._model == "chat/m"
+        assert agent.sql_agent._model == DEFAULT_SQL_MODEL
+        assert agent.router._model == DEFAULT_ROUTER_MODEL
 
     def test_persists_messages(self, tmp_path):
         store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
+        agent = RouterChatAgent(chat_store_path=str(store_path))
         agent.answer("hello")
         agent.answer("world")
         history = agent.get_history()
@@ -107,37 +166,28 @@ class TestLangChainAgent:
         assert history[2] == ("user", "world")
         assert history[3][0] == "assistant"
 
-    def test_close_store(self, tmp_path):
+    def test_get_history_empty(self, tmp_path):
         store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
-        agent.close_store()
-        assert os.path.exists(str(store_path))
-
-    def test_get_history_returns_conversation(self, tmp_path):
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
+        agent = RouterChatAgent(chat_store_path=str(store_path))
         assert agent.get_history() == []
+
+    def test_get_history_after_answer(self, tmp_path):
+        store_path = tmp_path / "chat.db"
+        agent = RouterChatAgent(chat_store_path=str(store_path))
         agent.answer("hi")
         history = agent.get_history()
         assert len(history) == 2
         assert history[0] == ("user", "hi")
 
-    def test_extract_sql_from_markdown(self):
-        text = "Here is the query:\n```sql\nSELECT * FROM users;\n```\n"
-        result = LangChainAgent._extract_sql(text)
-        assert result == "SELECT * FROM users;"
+    def test_close_store(self, tmp_path):
+        import os
+        store_path = tmp_path / "chat.db"
+        agent = RouterChatAgent(chat_store_path=str(store_path))
+        agent.close_store()
+        assert os.path.exists(str(store_path))
 
-    def test_extract_sql_from_text(self):
-        text = "Let me check.\n```sql\nSELECT COUNT(*) FROM orders;\n```\nDone."
-        result = LangChainAgent._extract_sql(text)
-        assert result == "SELECT COUNT(*) FROM orders;"
-
-    def test_extract_sql_none(self):
-        text = "Hello, how can I help you?"
-        result = LangChainAgent._extract_sql(text)
-        assert result is None
-
-    def test_build_system_prompt_includes_schema(self, tmp_path):
-        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
-        prompt = agent._build_system_prompt()
-        assert "SQLite database" in prompt
+    def test_set_database_path_propagates(self):
+        agent = RouterChatAgent()
+        assert agent.sql_agent._db_path is None
+        agent.set_database_path("/some/db.sqlite")
+        assert agent.sql_agent._db_path == "/some/db.sqlite"

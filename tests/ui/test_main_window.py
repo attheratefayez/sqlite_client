@@ -81,12 +81,14 @@ class TestMainWindow:
 
     def test_open_data_browser_adds_tab(self, window, sample_db_path, qtbot):
         window._db.connect(sample_db_path)
+        window._worker.open_database(sample_db_path)
         count = window._right_tabs.count()
         window._open_data_browser("test")
         assert window._right_tabs.count() == count + 1
 
     def test_open_data_browser_reuses_tab(self, window, sample_db_path, qtbot):
         window._db.connect(sample_db_path)
+        window._worker.open_database(sample_db_path)
         window._open_data_browser("test")
         count = window._right_tabs.count()
         window._open_data_browser("test")

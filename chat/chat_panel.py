@@ -1,5 +1,7 @@
 """Collapsible chat panel for natural-language database queries."""
 
+import re
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
 )
@@ -59,8 +61,37 @@ class ChatPanel(QWidget):
     def append_reply(self, user_message: str, reply: str) -> None:
         self._append_message("Agent", reply)
 
+    @staticmethod
+    def _md_to_html(text: str) -> str:
+        blocks: list[str] = []
+
+        def _save(m: re.Match) -> str:
+            blocks.append(m.group(0))
+            return f"\x00{len(blocks) - 1}\x00"
+
+        text = re.sub(r'```.*?```', _save, text, flags=re.DOTALL)
+        text = re.sub(r'`[^`]+`', _save, text)
+        text = re.sub(r'\*\*(.+?)\*\*', _save, text)
+        text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', _save, text)
+
+        text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        def _restore(m: re.Match) -> str:
+            raw = blocks[int(m.group(1))]
+            raw = raw.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            raw = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', raw)
+            raw = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', raw)
+            raw = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', raw, flags=re.DOTALL)
+            raw = re.sub(r'`([^`]+)`', r'<code>\1</code>', raw)
+            return raw
+
+        text = re.sub(r'\x00(\d+)\x00', _restore, text)
+        text = text.replace('\n', '<br>')
+        return text
+
     def _append_message(self, sender: str, text: str) -> None:
-        self._history.append(f"<b>{sender}:</b> {text}")
+        html = self._md_to_html(text)
+        self._history.append(f"<b>{sender}:</b> {html}")
         cursor = self._history.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self._history.setTextCursor(cursor)

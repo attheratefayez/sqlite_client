@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import QThread
 from chat.worker import ChatWorker
-from chat.agent import DemoAgent
+from chat.agent import DemoAgent, RouterChatAgent
 
 
 class TestChatWorker:
@@ -20,32 +20,19 @@ class TestChatWorker:
         thread.quit()
         thread.wait(3000)
 
-    def test_set_agent_swaps_implementation(self, qtbot):
-        agent = DemoAgent()
+    def test_set_models_propagates(self, qtbot):
+        agent = RouterChatAgent()
         worker = ChatWorker(agent)
         thread = QThread()
         worker.moveToThread(thread)
         thread.start()
 
-        with qtbot.waitSignal(worker.response_received, timeout=5000) as blocker:
-            worker.send_message("x")
-        assert blocker.args[1] == "not yet implemented"
-
-        class CustomAgent:
-            def answer(self, msg):
-                return f"custom: {msg}"
-            def get_history(self):
-                return []
-            def close_store(self):
-                pass
-
-        worker.set_agent(CustomAgent())
-        with qtbot.waitSignal(worker.response_received, timeout=5000) as blocker:
-            worker.send_message("y")
-        assert blocker.args[1] == "custom: y"
-
+        worker.set_models(chat_model="c", sql_model="s", router_model="r")
         thread.quit()
         thread.wait(3000)
+        assert agent.chat_agent._model == "c"
+        assert agent.sql_agent._model == "s"
+        assert agent.router._model == "r"
 
     def test_load_history_emits_signal(self, qtbot):
         agent = DemoAgent()

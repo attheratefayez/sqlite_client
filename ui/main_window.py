@@ -17,7 +17,12 @@ from ui.connection_dialog import ConnectionDialog
 from ui.data_browser import DataBrowser
 from chat.chat_panel import ChatPanel
 from chat.worker import ChatWorker
-from chat.agent import LangChainAgent, DEFAULT_MODEL
+from chat.agent import (
+    RouterChatAgent,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_SQL_MODEL,
+    DEFAULT_ROUTER_MODEL,
+)
 from resources.style import THEMES
 
 
@@ -30,7 +35,7 @@ class MainWindow(QMainWindow):
     _open_worker_db = pyqtSignal(str)
     _close_worker_db = pyqtSignal()
     _chat_set_db = pyqtSignal(str)
-    _chat_set_model = pyqtSignal(str)
+    _chat_set_models = pyqtSignal(str, str, str)
     _chat_load_history = pyqtSignal()
 
     def __init__(self):
@@ -51,15 +56,27 @@ class MainWindow(QMainWindow):
         self._close_worker_db.connect(self._worker.close_database)
 
         self._chat_model = self._settings.value(
-            "chat_model", DEFAULT_MODEL, type=str
+            "chat_model", DEFAULT_CHAT_MODEL, type=str
+        )
+        self._sql_model = self._settings.value(
+            "sql_model", DEFAULT_SQL_MODEL, type=str
+        )
+        self._router_model = self._settings.value(
+            "router_model", DEFAULT_ROUTER_MODEL, type=str
         )
         self._chat_thread = QThread()
-        self._chat_worker = ChatWorker(LangChainAgent(model=self._chat_model))
+        self._chat_worker = ChatWorker(
+            RouterChatAgent(
+                chat_model=self._chat_model,
+                sql_model=self._sql_model,
+                router_model=self._router_model,
+            )
+        )
         self._chat_worker.moveToThread(self._chat_thread)
         self._chat_thread.start()
 
         self._chat_set_db.connect(self._chat_worker.set_database_path)
-        self._chat_set_model.connect(self._chat_worker.set_model)
+        self._chat_set_models.connect(self._chat_worker.set_models)
         self._chat_load_history.connect(self._chat_worker.load_history)
 
         self._setup_menu()
@@ -112,8 +129,8 @@ class MainWindow(QMainWindow):
         self._chat_action.triggered.connect(self._on_toggle_chat)
         view_menu.addAction(self._chat_action)
 
-        self._chat_model_action = QAction("Chat &Model...", self)
-        self._chat_model_action.triggered.connect(self._on_change_chat_model)
+        self._chat_model_action = QAction("Chat &Models...", self)
+        self._chat_model_action.triggered.connect(self._on_configure_models)
         view_menu.addAction(self._chat_model_action)
 
         help_menu = menubar.addMenu("&Help")
@@ -171,19 +188,52 @@ class MainWindow(QMainWindow):
     def _on_toggle_chat(self, visible: bool) -> None:
         self._chat_dock.setVisible(visible)
 
-    def _on_change_chat_model(self) -> None:
-        from PyQt6.QtWidgets import QInputDialog
+    def _on_configure_models(self) -> None:
+        from PyQt6.QtWidgets import QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QVBoxLayout
 
-        model, ok = QInputDialog.getText(
-            self, "Chat Model", "HuggingFace model ID:",
-            text=self._chat_model,
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Chat Model Settings")
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+
+        chat_edit = QLineEdit(self._chat_model)
+        chat_edit.setPlaceholderText("e.g. HuggingFaceH4/zephyr-7b-beta")
+        form.addRow("Chat model:", chat_edit)
+
+        sql_edit = QLineEdit(self._sql_model)
+        sql_edit.setPlaceholderText("e.g. HuggingFaceH4/zephyr-7b-beta")
+        form.addRow("SQL model:", sql_edit)
+
+        router_edit = QLineEdit(self._router_model)
+        router_edit.setPlaceholderText("e.g. microsoft/Phi-3-mini-4k-instruct")
+        form.addRow("Router model:", router_edit)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        if not ok or not model.strip():
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        model = model.strip()
-        self._chat_model = model
-        self._settings.setValue("chat_model", model)
-        self._chat_set_model.emit(model)
+
+        chat = chat_edit.text().strip()
+        sql = sql_edit.text().strip()
+        router = router_edit.text().strip()
+
+        if not chat or not sql or not router:
+            return
+
+        self._chat_model = chat
+        self._sql_model = sql
+        self._router_model = router
+        self._settings.setValue("chat_model", chat)
+        self._settings.setValue("sql_model", sql)
+        self._settings.setValue("router_model", router)
+        self._chat_set_models.emit(chat, sql, router)
 
     def _setup_status_bar(self):
         """Create the status bar with a connection state label."""
