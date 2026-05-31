@@ -1,15 +1,14 @@
-"""Chat agent classes for natural-language database interaction.
-
-Provides :class:`ChatAgent`, :class:`DemoAgent`, and
-:class:`LangChainAgent` backed by HuggingFace + LangChain.
-"""
+"""Chat agent classes for natural-language database interaction."""
 
 from __future__ import annotations
 
+import json
 import re
 
 from chat.chat_store import ChatStore
 from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_MODEL = "HuggingFaceH4/zephyr-7b-beta"
 
@@ -23,15 +22,40 @@ MODEL_NOT_SUPPORTED_HINT = (
     "You can change the model via View > Chat Model..."
 )
 
-load_dotenv()
+SYSTEM_PROMPT = """\
+You are a helpful assistant that can chat naturally AND use database tools when needed.
 
+AVAILABLE TOOLS:
 
-SQL_PROMPT = """\
-You are a SQLite expert. Given the following database schema, write a SQLite query to answer the user's question.
-Schema:
-{schema}
-Question: {question}
-Answer with ONLY the SQLite query, no explanation:"""
+get_schema — Returns the full database schema (tables, columns, types).
+  No arguments needed. Use this when you need to understand the database structure.
+
+run_sql — Executes a SQL query and returns the results.
+  Args: { "query": "your SQL here" }
+  Use this to answer questions about the data in the database.
+
+HOW TO USE TOOLS:
+When the user asks a question that requires database information:
+1. First call get_schema if you don't know the schema
+2. Then call run_sql with an appropriate SQL query
+3. Use the results to answer naturally
+
+To call a tool, include this in your response:
+ACTION: tool_name
+ACTION_INPUT: {"arg": "value"}
+
+The tool result will be shown to you. Then continue the conversation.
+If you don't need any tools, just respond normally.
+
+RULES:
+- Be conversational and friendly.
+- If the question is about the database, use the tools.
+- If the question is general (hello, how are you, tell me a joke, etc.),
+  just answer naturally without tools.
+- Keep responses clear and concise.
+- Use the tool results to provide accurate, data-driven answers."""
+
+MAX_REACT_STEPS = 6
 
 
 class ChatAgent:
@@ -61,11 +85,11 @@ class DemoAgent(ChatAgent):
 
 
 class LangChainAgent(ChatAgent):
-    """Chat agent backed by HuggingFace + LangChain SQL toolkit.
+    """Conversational chat agent with database tool access.
 
-    Generates SQL via :class:`~langchain_huggingface.HuggingFaceEndpoint`,
-    executes it against the user's database, and persists every
-    conversation in a local ``chat/chat_history.db`` file.
+    Uses a ReAct loop to decide when to query the database via tools
+    (``get_schema``, ``run_sql``) and when to answer naturally.
+    Conversations are persisted in ``chat/chat_history.db``.
     """
 
     def __init__(
@@ -130,6 +154,10 @@ class LangChainAgent(ChatAgent):
     def close_store(self) -> None:
         self._store.close()
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def answer(self, message: str) -> str:
         self._store.add_message(self._conversation_id, "user", message)
 
@@ -139,39 +167,115 @@ class LangChainAgent(ChatAgent):
             return reply
 
         try:
-            schema = self._sql_db.table_info
-            prompt = SQL_PROMPT.format(schema=schema, question=message)
-            from langchain_core.messages import HumanMessage
-            response = self._llm.invoke([HumanMessage(content=prompt)])
-            raw = response.content
-            sql = self._extract_sql(raw)
-
-            result = self._sql_db.run(sql)
-            reply = f"**Query:** `{sql}`\n\n```\n{result}\n```"
+            reply = self._run_react_loop(message)
         except Exception as exc:
             reply = f"**Error:** {exc}"
 
         self._store.add_message(self._conversation_id, "assistant", reply)
         return reply
 
+    # ------------------------------------------------------------------
+    # ReAct loop
+    # ------------------------------------------------------------------
+
+    def _run_react_loop(self, message: str) -> str:
+        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+
+        # Include recent conversation history (up to 6 most recent messages)
+        history = self._store.get_messages(self._conversation_id)
+        for h in history[-6:]:
+            if h["role"] == "user":
+                messages.append(HumanMessage(content=h["content"]))
+            elif h["role"] == "assistant":
+                messages.append(AIMessage(content=h["content"]))
+
+        for step in range(MAX_REACT_STEPS):
+            response = self._llm.invoke(messages)
+            reply = response.content.strip()
+
+            action = self._parse_action(reply)
+            if action is None:
+                return reply
+
+            messages.append(AIMessage(content=reply))
+            tool_name = action["name"]
+            tool_args = action.get("args", {})
+
+            try:
+                result = self._run_tool(tool_name, tool_args)
+            except Exception as exc:
+                result = f"Error executing {tool_name}: {exc}"
+
+            messages.append(
+                HumanMessage(content=f"Tool result ({tool_name}):\n{result}")
+            )
+
+        return "I'm sorry, I couldn't complete that request in the allowed number of steps."
+
+    # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+
+    TOOL_SCHEMA = {
+        "get_schema": {
+            "description": "Get the database schema",
+            "handler": "_tool_get_schema",
+        },
+        "run_sql": {
+            "description": "Execute a SQL query",
+            "handler": "_tool_run_sql",
+        },
+    }
+
+    def _run_tool(self, name: str, args: dict) -> str:
+        tool = self.TOOL_SCHEMA.get(name)
+        if tool is None:
+            return f"Unknown tool: {name}. Available: {', '.join(self.TOOL_SCHEMA)}"
+        handler = getattr(self, tool["handler"])
+        return handler(args)
+
+    def _tool_get_schema(self, args: dict) -> str:
+        if self._sql_db is None:
+            return "No database is open."
+        return self._sql_db.table_info
+
+    def _tool_run_sql(self, args: dict) -> str:
+        if self._sql_db is None:
+            return "No database is open."
+        sql = args.get("query", "")
+        if not sql:
+            return "No SQL query provided."
+        return self._sql_db.run(sql)
+
+    # ------------------------------------------------------------------
+    # Action parsing
+    # ------------------------------------------------------------------
+
     @staticmethod
-    def _extract_sql(text: str) -> str:
-        match = re.search(r"```(?:sql)?\s*\n(.*?)\n```", text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        lines = text.strip().splitlines()
-        sql_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if re.match(
-                r"^(SELECT|WITH|INSERT|UPDATE|DELETE|PRAGMA|CREATE|ALTER|DROP)\b",
-                stripped,
-                re.IGNORECASE,
-            ):
-                sql_lines.append(stripped)
-        if sql_lines:
-            return " ".join(sql_lines)
-        return text.strip()
+    def _parse_action(text: str) -> dict | None:
+        m = re.search(
+            r"ACTION:\s*(\w+)(?:\s*\nACTION_INPUT:\s*(\{.*\}|[^\n]*))?",
+            text,
+            re.DOTALL,
+        )
+        if m:
+            name = m.group(1)
+            args_raw = m.group(2)
+            if args_raw:
+                try:
+                    args = json.loads(args_raw)
+                except json.JSONDecodeError:
+                    args = {"query": args_raw.strip()}
+            else:
+                args = {}
+            return {"name": name, "args": args}
+        return None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _build_no_llm_reply(self) -> str:
         if self._db_path is None:
