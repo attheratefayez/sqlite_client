@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 
 from chat.chat_store import ChatStore
@@ -23,40 +22,30 @@ MODEL_NOT_SUPPORTED_HINT = (
 )
 
 SYSTEM_PROMPT = """\
-You are a helpful assistant that can chat naturally AND use database tools when needed.
+You are a helpful assistant with access to a SQLite database.
 
-AVAILABLE TOOLS:
+To answer questions about the data:
+1. Write a SQLite query that answers the question
+2. Wrap it in a ```sql code block
+3. I will run the query and show you the results
+4. Then you will answer the user in plain language
 
-get_schema — Returns the full database schema (tables, columns, types).
-  No arguments needed. Use this when you need to understand the database structure.
+If the question is general (hello, how are you, etc.), just answer naturally.
 
-run_sql — Executes a SQL query and returns the results.
-  Args: { "query": "your SQL here" }
-  Use this to answer questions about the data in the database.
-
-HOW TO USE TOOLS:
-When the user asks a question that requires database information:
-1. First call get_schema if you don't know the schema
-2. Then call run_sql with an appropriate SQL query
-3. Use the results to answer naturally
-
-To call a tool, include this in your response:
-ACTION: tool_name
-ACTION_INPUT: {"arg": "value"}
-
-The tool result will be shown to you. Then continue the conversation.
-If you don't need any tools, just respond normally.
-
-RULES:
+Rules:
 - Be conversational and friendly.
-- If the question is about the database, use the tools.
-- If the question is general (hello, how are you, tell me a joke, etc.),
-  just answer naturally without tools.
-- Keep responses clear and concise.
-- Use the tool results to provide accurate, data-driven answers.
 - Do NOT use emojis or any emoticons. Plain text only."""
 
-MAX_REACT_STEPS = 6
+SCHEMA_HINT = (
+    "\n\nHere is the database schema for reference:\n{schema}"
+)
+
+ANSWER_PROMPT = """\
+I ran your SQL query and got these results:
+
+{results}
+
+Now answer the user's original question in plain language, based on these results."""
 
 
 class ChatAgent:
@@ -88,8 +77,12 @@ class DemoAgent(ChatAgent):
 class LangChainAgent(ChatAgent):
     """Conversational chat agent with database tool access.
 
-    Uses a ReAct loop to decide when to query the database via tools
-    (``get_schema``, ``run_sql``) and when to answer naturally.
+    Uses a two-stage approach:
+    1. Ask the LLM to answer naturally, optionally writing SQL in a
+       `````sql```` code block.
+    2. If SQL is present, execute it and re-prompt the LLM to produce
+       the final answer based on the query results.
+
     Conversations are persisted in ``chat/chat_history.db``.
     """
 
@@ -168,111 +161,72 @@ class LangChainAgent(ChatAgent):
             return reply
 
         try:
-            reply = self._run_react_loop(message)
+            reply = self._answer_question(message)
         except Exception as exc:
-            reply = f"**Error:** {exc}"
+            reply = f"Error: {exc}"
 
         self._store.add_message(self._conversation_id, "assistant", reply)
         return reply
 
     # ------------------------------------------------------------------
-    # ReAct loop
+    # Two-stage question answering
     # ------------------------------------------------------------------
 
-    def _run_react_loop(self, message: str) -> str:
+    def _answer_question(self, message: str) -> str:
         from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
-        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        # --- Stage 1: get the model's response (with optional SQL) ---
+        stage1_msgs = [SystemMessage(content=self._build_system_prompt())]
 
-        # Include recent conversation history (up to 6 most recent messages)
         history = self._store.get_messages(self._conversation_id)
         for h in history[-6:]:
             if h["role"] == "user":
-                messages.append(HumanMessage(content=h["content"]))
+                stage1_msgs.append(HumanMessage(content=h["content"]))
             elif h["role"] == "assistant":
-                messages.append(AIMessage(content=h["content"]))
+                stage1_msgs.append(AIMessage(content=h["content"]))
 
-        for step in range(MAX_REACT_STEPS):
-            response = self._llm.invoke(messages)
-            reply = response.content.strip()
+        response = self._llm.invoke(stage1_msgs)
+        reply = response.content.strip()
 
-            action = self._parse_action(reply)
-            if action is None:
-                return reply
-
-            messages.append(AIMessage(content=reply))
-            tool_name = action["name"]
-            tool_args = action.get("args", {})
-
+        # --- Stage 2: execute any SQL and re-prompt if needed ---
+        sql = self._extract_sql(reply)
+        if sql:
             try:
-                result = self._run_tool(tool_name, tool_args)
+                results = self._sql_db.run(sql)
             except Exception as exc:
-                result = f"Error executing {tool_name}: {exc}"
+                results = f"Error running query: {exc}"
 
-            messages.append(
-                HumanMessage(content=f"Tool result ({tool_name}):\n{result}")
+            stage2_msgs = stage1_msgs.copy()
+            stage2_msgs.append(AIMessage(content=reply))
+            stage2_msgs.append(
+                HumanMessage(content=ANSWER_PROMPT.format(results=results))
             )
 
-        return "I'm sorry, I couldn't complete that request in the allowed number of steps."
+            response = self._llm.invoke(stage2_msgs)
+            reply = response.content.strip()
+
+        return reply
 
     # ------------------------------------------------------------------
-    # Tool execution
-    # ------------------------------------------------------------------
-
-    TOOL_SCHEMA = {
-        "get_schema": {
-            "description": "Get the database schema",
-            "handler": "_tool_get_schema",
-        },
-        "run_sql": {
-            "description": "Execute a SQL query",
-            "handler": "_tool_run_sql",
-        },
-    }
-
-    def _run_tool(self, name: str, args: dict) -> str:
-        tool = self.TOOL_SCHEMA.get(name)
-        if tool is None:
-            return f"Unknown tool: {name}. Available: {', '.join(self.TOOL_SCHEMA)}"
-        handler = getattr(self, tool["handler"])
-        return handler(args)
-
-    def _tool_get_schema(self, args: dict) -> str:
-        if self._sql_db is None:
-            return "No database is open."
-        return self._sql_db.table_info
-
-    def _tool_run_sql(self, args: dict) -> str:
-        if self._sql_db is None:
-            return "No database is open."
-        sql = args.get("query", "")
-        if not sql:
-            return "No SQL query provided."
-        return self._sql_db.run(sql)
-
-    # ------------------------------------------------------------------
-    # Action parsing
+    # SQL extraction
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_action(text: str) -> dict | None:
-        m = re.search(
-            r"ACTION:\s*(\w+)(?:\s*\nACTION_INPUT:\s*(\{.*\}|[^\n]*))?",
-            text,
-            re.DOTALL,
-        )
+    def _extract_sql(text: str) -> str | None:
+        m = re.search(r"```sql\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
         if m:
-            name = m.group(1)
-            args_raw = m.group(2)
-            if args_raw:
-                try:
-                    args = json.loads(args_raw)
-                except json.JSONDecodeError:
-                    args = {"query": args_raw.strip()}
-            else:
-                args = {}
-            return {"name": name, "args": args}
+            return m.group(1).strip()
         return None
+
+    # ------------------------------------------------------------------
+    # Prompt building
+    # ------------------------------------------------------------------
+
+    def _build_system_prompt(self) -> str:
+        prompt = SYSTEM_PROMPT
+        if self._sql_db is not None:
+            prompt += SCHEMA_HINT.format(schema=self._sql_db.table_info)
+        return prompt
 
     # ------------------------------------------------------------------
     # Helpers

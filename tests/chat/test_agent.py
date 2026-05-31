@@ -122,35 +122,22 @@ class TestLangChainAgent:
         assert len(history) == 2
         assert history[0] == ("user", "hi")
 
-    def test_parse_action_get_schema_no_args(self):
-        text = "Let me check the schema.\nACTION: get_schema"
-        result = LangChainAgent._parse_action(text)
-        assert result == {"name": "get_schema", "args": {}}
+    def test_extract_sql_from_markdown(self):
+        text = "Here is the query:\n```sql\nSELECT * FROM users;\n```\n"
+        result = LangChainAgent._extract_sql(text)
+        assert result == "SELECT * FROM users;"
 
-    def test_parse_action_run_sql_with_json_args(self):
-        text = 'ACTION: run_sql\nACTION_INPUT: {"query": "SELECT 1"}'
-        result = LangChainAgent._parse_action(text)
-        assert result == {"name": "run_sql", "args": {"query": "SELECT 1"}}
+    def test_extract_sql_from_text(self):
+        text = "Let me check.\n```sql\nSELECT COUNT(*) FROM orders;\n```\nDone."
+        result = LangChainAgent._extract_sql(text)
+        assert result == "SELECT COUNT(*) FROM orders;"
 
-    def test_parse_action_returns_none(self):
+    def test_extract_sql_none(self):
         text = "Hello, how can I help you?"
-        result = LangChainAgent._parse_action(text)
+        result = LangChainAgent._extract_sql(text)
         assert result is None
 
-    def test_tool_get_schema_no_db(self, tmp_path):
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
-        result = agent._tool_get_schema({})
-        assert result == "No database is open."
-
-    def test_tool_run_sql_no_db(self, tmp_path):
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
-        result = agent._tool_run_sql({"query": "SELECT 1"})
-        assert result == "No database is open."
-
-    def test_run_tool_unknown(self, tmp_path):
-        store_path = tmp_path / "chat.db"
-        agent = LangChainAgent(chat_store_path=str(store_path))
-        result = agent._run_tool("nonexistent", {})
-        assert "Unknown tool" in result
+    def test_build_system_prompt_includes_schema(self, tmp_path):
+        agent = LangChainAgent(chat_store_path=str(tmp_path / "chat.db"))
+        prompt = agent._build_system_prompt()
+        assert "SQLite database" in prompt
