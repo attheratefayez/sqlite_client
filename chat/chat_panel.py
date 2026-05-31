@@ -90,6 +90,8 @@ class ChatPanel(QWidget):
         return text
 
     def _append_message(self, sender: str, text: str) -> None:
+        if sender == "You" and not self._history.document().isEmpty():
+            self._history.append("<br>")
         html = self._md_to_html(text)
         self._history.append(f"<b>{sender}:</b> {html}")
         cursor = self._history.textCursor()
