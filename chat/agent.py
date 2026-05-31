@@ -9,16 +9,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_CHAT_MODEL = "HuggingFaceH4/zephyr-7b-beta"
-DEFAULT_SQL_MODEL = "HuggingFaceH4/zephyr-7b-beta"
+DEFAULT_CHAT_MODEL = "Qwen/Qwen3.5-4B"
+DEFAULT_SQL_MODEL = "Qwen/Qwen3.5-4B"
 
 MODEL_NOT_SUPPORTED_HINT = (
     "The model '{model}' is not available on the HuggingFace Inference API. "
     "Try one of these:\n"
-    "  - HuggingFaceH4/zephyr-7b-beta\n"
+    "  - Qwen/Qwen3.5-4B\n"
+    "  - Qwen/Qwen3.5-9B\n"
+    "  - Qwen/Qwen3-4B-Instruct-2507\n"
     "  - microsoft/Phi-3-mini-4k-instruct\n"
-    "  - mistralai/Mistral-7B-Instruct-v0.3\n"
-    "  - google/gemma-2-2b-it"
+    "  - mistralai/Mistral-7B-Instruct-v0.3"
 )
 
 CHAT_SYSTEM_PROMPT = """\
