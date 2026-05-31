@@ -27,7 +27,7 @@ class TestChatStore:
         cid1 = store.create_conversation("Chat A")
         cid2 = store.create_conversation("Chat B")
         convs = store.get_conversations()
-        assert len(convs) == 2
+        assert len(convs) == 3  # 2 created + 1 general
         assert convs[0]["title"] == "Chat B"
         assert convs[1]["title"] == "Chat A"
         store.close()
@@ -56,4 +56,42 @@ class TestChatStore:
         store.add_message(cid, "user", "new message")
         updated = store.get_conversations()[0]
         assert updated["updated_at"] >= orig["updated_at"]
+        store.close()
+
+    # --- get_or_create_conversation tests ---
+
+    def test_get_or_create_creates_new(self, tmp_path):
+        store = ChatStore(db_path=str(tmp_path / "chat.db"))
+        cid = store.get_or_create_conversation("/some/path.db")
+        assert isinstance(cid, int)
+        assert cid > 0
+        store.close()
+
+    def test_get_or_create_returns_same_for_same_path(self, tmp_path):
+        store = ChatStore(db_path=str(tmp_path / "chat.db"))
+        cid1 = store.get_or_create_conversation("/same/path.db")
+        cid2 = store.get_or_create_conversation("/same/path.db")
+        assert cid1 == cid2
+        store.close()
+
+    def test_get_or_create_general_conversation(self, tmp_path):
+        store = ChatStore(db_path=str(tmp_path / "chat.db"))
+        cid = store.get_or_create_conversation("")
+        assert isinstance(cid, int)
+        assert cid > 0
+        store.close()
+
+    def test_general_conversation_precreated(self, tmp_path):
+        store = ChatStore(db_path=str(tmp_path / "chat.db"))
+        cid = store.get_or_create_conversation("")
+        # Second call returns same pre-created ID
+        cid2 = store.get_or_create_conversation("")
+        assert cid == cid2
+        store.close()
+
+    def test_different_paths_different_conversations(self, tmp_path):
+        store = ChatStore(db_path=str(tmp_path / "chat.db"))
+        cid1 = store.get_or_create_conversation("/db1.sqlite")
+        cid2 = store.get_or_create_conversation("/db2.sqlite")
+        assert cid1 != cid2
         store.close()

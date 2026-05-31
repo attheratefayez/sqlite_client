@@ -190,3 +190,16 @@ class TestRouterChatAgent:
         assert agent.sql_agent._db_path is None
         agent.set_database_path("/some/db.sqlite")
         assert agent.sql_agent._db_path == "/some/db.sqlite"
+
+    def test_set_database_path_switches_conversation(self, tmp_path):
+        store_path = tmp_path / "chat.db"
+        agent = RouterChatAgent(chat_store_path=str(store_path))
+        agent.answer("hello")
+        first_msgs = agent.get_history()
+
+        agent.set_database_path(str(tmp_path / "other.db"))
+        second_msgs = agent.get_history()
+        assert second_msgs == []
+
+        agent.answer("world")
+        assert len(agent.get_history()) == 2

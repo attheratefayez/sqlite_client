@@ -9,6 +9,10 @@ import pathlib
 class ChatStore:
     """Persists conversations and messages in a local SQLite database.
 
+    Each conversation can be linked to a specific database via *db_path*.
+    Opening the same database again resumes the same conversation.
+    A ``db_path`` of ``""`` (empty string) represents the general (no-DB) chat.
+
     The database file defaults to ``chat/chat_history.db``.
     """
 
@@ -26,6 +30,7 @@ class ChatStore:
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL DEFAULT 'Chat',
+                db_path TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             );
@@ -39,13 +44,64 @@ class ChatStore:
             );
         """)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cursor = self._conn.execute("PRAGMA table_info(conversations)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "db_path" not in cols:
+            self._conn.execute(
+                "ALTER TABLE conversations ADD COLUMN db_path TEXT NOT NULL DEFAULT ''"
+            )
+            self._conn.commit()
+        self._ensure_general_conversation()
+
+    def _ensure_general_conversation(self) -> None:
+        cur = self._conn.execute("SELECT id FROM conversations WHERE db_path = ''")
+        if not cur.fetchone():
+            self._conn.execute(
+                "INSERT INTO conversations (title, db_path) VALUES ('General Chat', '')"
+            )
+            self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Conversation lifecycle
+    # ------------------------------------------------------------------
+
+    def get_or_create_conversation(self, db_path: str = "") -> int:
+        """Return the conversation ID for *db_path*, creating one if needed.
+
+        The path is resolved to an absolute path so that ``./foo.db`` and
+        ``/abs/foo.db`` map to the same conversation.  An empty string
+        represents the general (no-database) chat.
+        """
+        if db_path:
+            db_path = str(pathlib.Path(db_path).resolve())
+        cur = self._conn.execute(
+            "SELECT id FROM conversations WHERE db_path = ?", (db_path,)
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        title = "General Chat" if not db_path else f"Chat - {pathlib.Path(db_path).name}"
+        cur = self._conn.execute(
+            "INSERT INTO conversations (title, db_path) VALUES (?, ?)",
+            (title, db_path),
+        )
+        self._conn.commit()
+        return cur.lastrowid
 
     def create_conversation(self, title: str = "Chat") -> int:
+        """Create a new unlinked conversation and return its ID."""
         cur = self._conn.execute(
             "INSERT INTO conversations (title) VALUES (?)", (title,)
         )
         self._conn.commit()
         return cur.lastrowid
+
+    # ------------------------------------------------------------------
+    # Messages
+    # ------------------------------------------------------------------
 
     def add_message(self, conversation_id: int, role: str, content: str) -> int:
         cur = self._conn.execute(

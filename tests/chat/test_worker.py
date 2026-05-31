@@ -47,7 +47,7 @@ class TestChatWorker:
         thread.quit()
         thread.wait(3000)
 
-    def test_set_database_path(self, qtbot):
+    def test_set_database_path_emits_history(self, qtbot):
         class TrackingAgent:
             def __init__(self):
                 self.path = None
@@ -56,7 +56,7 @@ class TestChatWorker:
             def set_database_path(self, path):
                 self.path = path
             def get_history(self):
-                return []
+                return [("user", "prev")]
             def close_store(self):
                 pass
 
@@ -66,7 +66,10 @@ class TestChatWorker:
         worker.moveToThread(thread)
         thread.start()
 
-        worker.set_database_path("/some/db.sqlite")
+        with qtbot.waitSignal(worker.history_loaded, timeout=5000) as blocker:
+            worker.set_database_path("/some/db.sqlite")
+
+        assert agent.path == "/some/db.sqlite"
+        assert blocker.args[0] == [("user", "prev")]
         thread.quit()
         thread.wait(3000)
-        assert agent.path == "/some/db.sqlite"

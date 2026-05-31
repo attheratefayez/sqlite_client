@@ -81,9 +81,10 @@ class MainWindow(QMainWindow):
         self._apply_saved_theme()
 
         self._chat_worker.history_loaded.connect(self._chat_panel.load_history)
-        QTimer.singleShot(0, self._chat_load_history.emit)
 
         self._load_last_database()
+        if not self._db.is_connected:
+            QTimer.singleShot(0, lambda: self._chat_set_db.emit(""))
 
     def _setup_menu(self):
         """Construct the menu bar with File, View, and Help menus."""
