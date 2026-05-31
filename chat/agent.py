@@ -110,7 +110,23 @@ class DemoAgent(ChatAgent):
 # ------------------------------------------------------------------
 
 class RouterAgent:
-    """Classifies a user message as ``"chat"`` or ``"sql"``."""
+    """Classifies a user message as ``"chat"`` or ``"sql"``.
+
+    Uses a keyword fast-path first.  If the message contains table/field
+    names or DB-related terms it returns ``"sql"`` immediately.  Only
+    ambiguous messages are sent to the LLM classifier.
+    """
+
+    _SQL_KEYWORDS = frozenset({
+        "table", "tables", "database", "databases",
+        "employee", "employees", "customer", "customers",
+        "order", "orders", "product", "products",
+        "user", "users", "record", "records",
+        "row", "rows", "column", "columns",
+        "schema", "data", "query", "queries",
+        "select", "insert", "update", "delete",
+        "count", "sum", "avg", "total",
+    })
 
     def __init__(self, model: str = DEFAULT_ROUTER_MODEL):
         self._model = model
@@ -131,6 +147,11 @@ class RouterAgent:
         self._setup()
 
     def classify(self, message: str) -> str:
+        msg_lower = message.lower()
+
+        if any(kw in msg_lower for kw in self._SQL_KEYWORDS):
+            return "sql"
+
         if self._llm is None:
             return "chat"
         from langchain_core.messages import HumanMessage, SystemMessage
