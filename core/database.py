@@ -112,7 +112,7 @@ class DatabaseConnection:
             sqlite3.Error: If the file cannot be opened.
         """
         resolved = pathlib.Path(path).resolve()
-        self._conn = sqlite3.connect(str(resolved))
+        self._conn = sqlite3.connect(str(resolved), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._path = str(resolved)
