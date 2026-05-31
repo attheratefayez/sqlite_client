@@ -331,51 +331,48 @@ def render_er_diagram(
 
     table_map = {t.name: t for t in tables}
 
-    # Collect edges + precompute bezier curves + label positions
-    pair_count: dict[tuple[str, str], int] = {}
-    edge_curves: list[list[tuple[float, float]]] = []
-    arrow_angles: list[float] = []
-    label_info: list[tuple[float, float, float, float, str, str, str, str]] = []
+    # Build column-index lookup for FK→PK row positioning
+    col_index: dict[tuple[str, str], int] = {}
+    for t in tables:
+        for i, c in enumerate(t.columns):
+            col_index[(t.name, c.name)] = i
+
+    def _col_center(t: ErTable, col_name: str) -> float:
+        idx = col_index.get((t.name, col_name), 0)
+        return t.y + HEADER_HEIGHT + idx * COLUMN_HEIGHT + COLUMN_HEIGHT / 2
+
+    # Draw edges from FK column (right side of child) → PK column (left side of parent)
+    off_count: dict[tuple[str, str], int] = {}
     for t in tables:
         for fk in t.foreign_keys:
             if fk.to_table not in table_map:
                 continue
             key = (fk.from_table, fk.to_table)
-            off = pair_count.get(key, 0)
-            pair_count[key] = off + 1
+            cnt = off_count.get(key, 0)
+            off_count[key] = cnt + 1
 
             src = table_map[fk.from_table]
             dst = table_map[fk.to_table]
 
-            src_y = src.y + src.height / 2 + off * 8 - 4
-            dst_y = dst.y + dst.height / 2 + off * 8 - 4
+            sy = _col_center(src, fk.from_col) + cnt * 6 - 3
+            ey = _col_center(dst, fk.to_col) + cnt * 6 - 3
 
             sx = (src.x + src.width) * S
-            sy = src_y * S
+            sy2 = sy * S
             ex = dst.x * S
-            ey = dst_y * S
+            ey2 = ey * S
 
             gap = abs(ex - sx)
             if gap < 10 * S:
                 gap = 10 * S
-            cp1 = (sx + gap * 0.3, sy)
-            cp2 = (ex - gap * 0.3, ey)
-            pts = _cubic_bezier((sx, sy), cp1, cp2, (ex, ey), steps=30 * S)
-            edge_curves.append(pts)
-            arrow_angles.append(math.atan2(ey - sy, ex - sx))
-
-            mid = len(pts) // 2
-            label_info.append((
-                pts[mid][0], pts[mid][1],
-                fk.from_table, fk.from_col,
-                fk.to_table, fk.to_col,
-            ))
-
-    # Draw edge lines + arrow heads (before tables)
-    for pts, angle in zip(edge_curves, arrow_angles):
-        draw.line(pts, fill=FK_COLOR, width=max(1, S // 2))
-        ex2, ey2 = pts[-1]
-        _arrow_head(draw, ex2, ey2, angle, size=5 * S)
+            pts = _cubic_bezier(
+                (sx, sy2), (sx + gap * 0.35, sy2),
+                (ex - gap * 0.35, ey2), (ex, ey2),
+                steps=30 * S,
+            )
+            draw.line(pts, fill=FK_COLOR, width=max(1, S // 2))
+            angle = math.atan2(ey2 - sy2, ex - sx)
+            _arrow_head(draw, ex, ey2, angle, size=5 * S)
 
     # Draw tables
     for t in tables:
@@ -416,18 +413,6 @@ def render_er_diagram(
             [(tx, ty), (tx + tw, ty + th)],
             radius=4 * S, outline=BORDER_COLOR, width=max(1, S // 2),
         )
-
-    # Draw edge labels on top of everything
-    for mx, my, ft, fc, tt, tc in label_info:
-        label = f"{ft}.{fc} → {tt}.{tc}"
-        lw = int(font_tiny.getlength(label)) + 4 * S
-        lx = mx - lw // 2
-        ly = my - 8 * S
-        draw.rectangle(
-            [(lx, ly - S), (lx + lw, ly + 8 * S)],
-            fill="white", outline=FK_COLOR,
-        )
-        draw.text((lx + 2 * S, ly), label, fill=FK_COLOR, font=font_tiny)
 
     if S > 1:
         ow = max_x
