@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QColor
 
-from core.database import DatabaseConnection, ColumnInfo
+from core.database import ColumnInfo, quote_identifier
 from core.worker import DatabaseWorker
 from ui.export_dialog import ExportDialog
 
@@ -520,4 +520,4 @@ class DataBrowser(QWidget):
         dlg = ExportDialog(self._table_name, columns, rows, self)
         dlg.exec()
 
-    _quote = staticmethod(DatabaseConnection._quote)
+    _quote = staticmethod(quote_identifier)

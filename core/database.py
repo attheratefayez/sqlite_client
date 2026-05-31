@@ -314,4 +314,9 @@ class DatabaseConnection:
         Returns:
             Double-quoted identifier string.
         """
-        return f'"{name}"'
+        return quote_identifier(name)
+
+
+def quote_identifier(name: str) -> str:
+    """Return a double-quoted SQL identifier."""
+    return f'"{name}"'

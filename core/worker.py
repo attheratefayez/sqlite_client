@@ -7,12 +7,8 @@ worker thread so the GUI stays responsive during long queries.
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from core.database import DatabaseConnection, ColumnInfo
+from core.database import DatabaseConnection, ColumnInfo, quote_identifier
 from core.query_executor import QueryExecutor, QueryResult
-
-
-def _quoted(name: str) -> str:
-    return f'"{name}"'
 
 
 class DatabaseWorker(QObject):
@@ -74,7 +70,7 @@ class DatabaseWorker(QObject):
         try:
             if where:
                 row = self._db.execute(
-                    f"SELECT COUNT(*) FROM {_quoted(table_name)}{where}"
+                    f"SELECT COUNT(*) FROM {quote_identifier(table_name)}{where}"
                 )
                 total = row[0][0] if row else 0
             else:
@@ -82,7 +78,7 @@ class DatabaseWorker(QObject):
 
             offset = page * page_size
             columns, rows = self._db.execute_with_results(
-                f"SELECT * FROM {_quoted(table_name)}{where}"
+                f"SELECT * FROM {quote_identifier(table_name)}{where}"
                 f" LIMIT {page_size} OFFSET {offset}",
             )
             self.data_page_finished.emit(table_name, columns, rows, total)
@@ -101,12 +97,12 @@ class DatabaseWorker(QObject):
         if not pk_cols:
             return
         pk_name = pk_cols[0].name
-        table = _quoted(table_name)
-        pk_q = _quoted(pk_name)
+        table = quote_identifier(table_name)
+        pk_q = quote_identifier(pk_name)
         try:
             for pk_val, col_name, new_val in pending:
                 self._db.execute(
-                    f"UPDATE {table} SET {_quoted(col_name)} = ? WHERE {pk_q} = ?",
+                    f"UPDATE {table} SET {quote_identifier(col_name)} = ? WHERE {pk_q} = ?",
                     (new_val, pk_val),
                 )
             self._db.commit()
@@ -121,12 +117,12 @@ class DatabaseWorker(QObject):
         table_name: str,
         columns: list[ColumnInfo],
     ) -> None:
-        cols = ", ".join(_quoted(c.name) for c in columns)
+        cols = ", ".join(quote_identifier(c.name) for c in columns)
         placeholders = ", ".join("?" for _ in columns)
         values = [None for _ in columns]
         try:
             self._db.execute(
-                f"INSERT INTO {_quoted(table_name)} ({cols}) VALUES ({placeholders})",
+                f"INSERT INTO {quote_identifier(table_name)} ({cols}) VALUES ({placeholders})",
                 tuple(values),
             )
             self._db.commit()
@@ -142,8 +138,8 @@ class DatabaseWorker(QObject):
         pk_name: str,
         pk_values: list,
     ) -> None:
-        table = _quoted(table_name)
-        pk_q = _quoted(pk_name)
+        table = quote_identifier(table_name)
+        pk_q = quote_identifier(pk_name)
         try:
             for pk_val in pk_values:
                 self._db.execute(
@@ -161,5 +157,5 @@ class DatabaseWorker(QObject):
         clauses = []
         for col in self._db.table_schema(table_name):
             escaped = search.replace("'", "''")
-            clauses.append(f"{_quoted(col.name)} LIKE '%{escaped}%'")
+            clauses.append(f"{quote_identifier(col.name)} LIKE '%{escaped}%'")
         return " WHERE " + " OR ".join(clauses)
