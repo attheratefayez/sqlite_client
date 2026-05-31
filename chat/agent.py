@@ -6,7 +6,6 @@ Provides :class:`ChatAgent`, :class:`DemoAgent`, and
 
 from __future__ import annotations
 
-import os
 import re
 
 from chat.chat_store import ChatStore
@@ -83,16 +82,16 @@ class LangChainAgent(ChatAgent):
 
         try:
             from langchain_community.utilities import SQLDatabase
-            from langchain_huggingface import HuggingFaceEndpoint
+            from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
             self._sql_db = SQLDatabase.from_uri(f"sqlite:///{self._db_path}")
-            kwargs = {"repo_id": self._model, "task": "text-generation"}
-            self._llm = HuggingFaceEndpoint(
+            endpoint = HuggingFaceEndpoint(
                 model=self._model,
                 max_new_tokens=1024,
                 temperature=0.1,
                 timeout=120,
             )
+            self._llm = ChatHuggingFace(llm=endpoint)
         except Exception as exc:
             self._setup_error = (
                 f"Failed to initialise: {exc}\n\nMake sure you have "
@@ -118,7 +117,9 @@ class LangChainAgent(ChatAgent):
         try:
             schema = self._sql_db.table_info
             prompt = SQL_PROMPT.format(schema=schema, question=message)
-            raw = self._llm.invoke(prompt)
+            from langchain_core.messages import HumanMessage
+            response = self._llm.invoke([HumanMessage(content=prompt)])
+            raw = response.content
             sql = self._extract_sql(raw)
 
             result = self._sql_db.run(sql)
