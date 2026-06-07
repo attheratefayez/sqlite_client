@@ -4,10 +4,10 @@ import pathlib
 
 from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
-    QStatusBar, QMessageBox, QLabel, QDockWidget,
+    QStatusBar, QMessageBox, QLabel, QDockWidget, QFontDialog,
 )
 from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QFileSystemWatcher
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QFont
 
 from core.database import DatabaseConnection
 from core.docker_volume import (
@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self._setup_chat_dock()
         self._setup_status_bar()
         self._apply_saved_theme()
+        self._apply_saved_font()
 
         self._chat_worker.history_loaded.connect(self._chat_panel.load_history)
 
@@ -127,6 +128,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._quit_action)
 
         view_menu = menubar.addMenu("&View")
+        self._font_action = QAction("&Font...", self)
+        self._font_action.triggered.connect(self._on_choose_font)
+        view_menu.addAction(self._font_action)
+        view_menu.addSeparator()
         self._dark_mode_action = QAction("&Dark Mode", self)
         self._dark_mode_action.setCheckable(True)
         self._dark_mode_action.setChecked(
@@ -481,6 +486,26 @@ class MainWindow(QMainWindow):
         dark = self._dark_mode_action.isChecked()
         self._set_theme(dark)
         self._settings.setValue("dark_mode", dark)
+
+    def _on_choose_font(self) -> None:
+        current = QFont(
+            self._settings.value("font_family", "", type=str) or QApplication.font().family(),
+            self._settings.value("font_size", 10, type=int),
+        )
+        ok, font = QFontDialog.getFont(current, self, "Choose Application Font")
+        if not ok:
+            return
+        self._settings.setValue("font_family", font.family())
+        self._settings.setValue("font_size", font.pointSize())
+        QApplication.instance().setFont(font)
+
+    def _apply_saved_font(self) -> None:
+        family = self._settings.value("font_family", "", type=str)
+        size = self._settings.value("font_size", 0, type=int)
+        if not family or not size:
+            return
+        font = QFont(family, size)
+        QApplication.instance().setFont(font)
 
     def _on_about(self):
         QMessageBox.about(
