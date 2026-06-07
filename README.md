@@ -1,19 +1,21 @@
 # SQLite Client
 
-A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query editor with syntax highlighting, table data browser with pagination and deferred inline editing, batch delete, export, dark/light theme, app-state persistence, and an extensible chat assistant. All database operations and chat-agent calls run asynchronously on background threads to keep the UI responsive.
+A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query editor with syntax highlighting, table data browser with pagination and deferred inline editing, batch delete, export, ER diagram viewer, Docker volume browser, dark/light theme, app-state persistence, auto-refresh on external database changes, and an extensible chat assistant. All database operations and chat-agent calls run asynchronously on background threads to keep the UI responsive.
 
 ![SQLite Client](sqlite_client.png)
 
 ## Features
 
-- **Database connection management** — Open existing `.db`/`.sqlite` files or create new databases with a file picker or recent files list
-- **Schema browser** — Tree view of tables (with column names, types, primary keys, nullable, default values) and views
+- **Database connection management** — Open existing `.db`/`.sqlite` files, create new databases, or browse and open databases from **Docker volumes** via a tree-view dialog with file picker, recent files list, or volume browser
+- **Schema browser** — Tree view of tables (with column names, types, primary keys, nullable, default values) and views, with context menu for ER diagram
+- **ER diagram viewer** — Auto-layout entity-relationship diagrams with connected-component clustering, bezier FK→PK edges, exported as high-resolution PNG (3x oversampled, 150 DPI)
 - **SQL query editor** — Multi-tab editor with SQL syntax highlighting and `Ctrl+Enter` execution
 - **Query results** — Tabular results display with row count and execution time, exportable
-- **Data browser** — Paginated table browsing with adjustable page size (10–1000), search/filter across all columns, deferred inline cell editing via **Commit Changes** button, add row, batch delete with confirmation
+- **Data browser** — Paginated table browsing with adjustable page size (10–1000), search/filter across all columns, deferred inline cell editing via **Commit Changes** button, **add row** (with type-appropriate defaults for NOT NULL columns), batch delete with confirmation, double-click editing starts with current cell value
 - **Export** — Export tables or query results to CSV, JSON, or SQL INSERT statements
 - **Dark/Light mode** — Toggle via View menu, persisted across sessions
 - **App-state persistence** — Last-opened database, recent files list, and theme preference saved via `QSettings`
+- **Auto-refresh** — Local database files are watched via `QFileSystemWatcher`; Docker volume databases are polled every 30s for external changes and auto-refreshed
 - **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Persists per-database chat history across sessions. Supports professional report generation (markdown + PDF) with a ``save`` / ``report`` / ``export`` command. **Clear history** button with confirmation dialog. Agent runs on its own background thread. Uses LangChain with HuggingFace models.
 - **Non-blocking operations** — All database reads, writes, and chat-agent calls execute on dedicated worker threads so the GUI never freezes
 - **Keyboard shortcuts** — `Ctrl+O` (open database), `Ctrl+W` (close database), `Ctrl+Q` (quit), `Ctrl+Enter` (execute query)
@@ -78,22 +80,26 @@ sqlite_client/
 ├── core/
 │   ├── __init__.py
 │   ├── database.py          # DatabaseConnection — sqlite3 wrapper, schema introspection, WAL mode
+│   ├── docker_volume.py     # Docker CLI wrapper — list volumes, browse trees, copy files in/out, file stat polling
+│   ├── er_diagram.py        # ER diagram engine — Pillow rendering, 3x oversampled, connected-component layout
 │   ├── query_executor.py    # QueryExecutor — SQL execution with timing, error handling, is_select detection
 │   ├── worker.py            # DatabaseWorker — QObject on a QThread for non-blocking DB operations
 │   └── export.py            # Export to CSV, JSON, and SQL INSERT format
 ├── ui/
 │   ├── __init__.py
-│   ├── main_window.py       # MainWindow — QMainWindow, splitter layout, worker thread lifecycle, menu
-│   ├── schema_browser.py    # SchemaBrowser — QTreeWidget of tables, views, columns
+│   ├── main_window.py       # MainWindow — QMainWindow, splitter layout, worker thread lifecycle, menu, Docker poll timer, QFileSystemWatcher
+│   ├── schema_browser.py    # SchemaBrowser — QTreeWidget of tables, views, columns, ER diagram context menu
 │   ├── query_editor.py      # QueryEditorWidget — multi-tab SQL editor with per-tab results
 │   ├── results_view.py      # ResultsView — QTableView for query results, info bar (rows + duration)
-│   ├── data_browser.py      # DataBrowser — paginated table view, deferred edits, Commit Changes button
-│   ├── connection_dialog.py # ConnectionDialog — open / create database dialog
+│   ├── data_browser.py      # DataBrowser — paginated table view, deferred edits, Commit Changes button, refresh()
+│   ├── connection_dialog.py # ConnectionDialog — open / create / Docker volume database dialog
+│   ├── docker_volume_dialog.py # DockerVolumeDialog — volume list + directory tree with QTreeView
+│   ├── er_dialog.py         # ErDialog — scrollable ER diagram display with export button
 │   ├── export_dialog.py     # ExportDialog — format picker and save dialog
 │   └── syntax_highlight.py  # SqlHighlighter — QSyntaxHighlighter for SQL keywords, strings, numbers
 ├── resources/
 │   ├── __init__.py
-│   └── style.py             # LIGHT_THEME, DARK_THEME, and THEMES dict with comprehensive QSS
+│   └── style.py             # LIGHT_THEME, DARK_THEME, and THEMES dict with comprehensive QSS (including QTreeView)
 ├── chat/
 │   ├── __init__.py
 │   ├── agent.py             # Chat agents (RouterChatAgent, SqlAgent, GeneralChatAgent, etc.)
@@ -113,6 +119,8 @@ sqlite_client/
     ├── core/
     │   ├── __init__.py
     │   ├── test_database.py       # 14 tests
+    │   ├── test_docker_volume.py  # 28 tests (mocked subprocess)
+    │   ├── test_er_diagram.py     # 10 tests
     │   ├── test_query_executor.py # 16 tests
     │   └── test_export.py         # 9 tests
     └── ui/
@@ -121,7 +129,7 @@ sqlite_client/
         ├── test_schema_browser.py     # 6 tests
         ├── test_query_editor.py       # 9 tests
         ├── test_results_view.py       # 10 tests
-        ├── test_data_browser.py       # 16 tests
+        ├── test_data_browser.py       # 26 tests
         ├── test_connection_dialog.py  # 4 tests
         └── test_syntax_highlight.py   # 5 tests
 ```
@@ -279,6 +287,12 @@ User clicks "Commit Changes"
 - **Non-blocking chat** — The `ChatWorker` runs on its own `QThread` (separate from the database worker), so agent calls never block the UI or database operations.
 - **Collapsible chat panel** — Uses `QDockWidget` on the right side of `MainWindow`. The user can close it (via X or **View > Chat** toggle) without losing state.
 - **Clear history** — A red **Clear** button below the input box triggers a confirmation dialog before deleting the current conversation from the database.
+- **Docker volume browser** — Docker volumes are not directly accessible on disk (they live in `/var/lib/docker/volumes/` owned by root, or inside a VM on Docker Desktop). The app uses `docker run --rm alpine:latest` with the volume mounted to traverse directories (`find`) and copy files (`cp`). The file is copied to `/tmp/sqlite_client_docker/<volume>/<safe_name>`, re-created with `shutil.copyfile` + `os.replace` to fix root ownership, then opened as a normal local database.
+- **Docker volume sync-back** — On close, the user is prompted to save changes back to the volume. The local file is checkpointed (`PRAGMA wal_checkpoint(TRUNCATE)`) before copying into the volume to ensure WAL data is included.
+- **Docker volume polling** — A 30-second `QTimer` polls the remote file via `wc -c` + `date -r` inside an Alpine container. When size or mtime changes, the file is re-copied and the database connection is re-established transparently.
+- **ER diagrams** — Rendered entirely with Pillow (no system graphviz dependency). Tables are laid out using connected-component BFS clustering (unrelated table groups are visually separated). FK→PK edges use bezier curves. Rendered at 3x resolution then downscaled with LANCZOS for crisp text at 150 DPI.
+- **Auto-refresh** — `QFileSystemWatcher` watches the `.db` (and `.db-wal` if present) for local files. A 500ms debounce timer prevents rapid refreshes from multiple file-change events. Refreshes schema browser and all open data browser tabs.
+- **`_default_for_col`** — When adding a row, the `DatabaseWorker` provides type-appropriate defaults for NOT NULL columns without a schema DEFAULT (0 for INTEGER, 0.0 for REAL, "" for TEXT, `b""` for BLOB). Columns with a DEFAULT are omitted from the INSERT so SQLite applies them.
 
 ## Development
 
