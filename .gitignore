@@ -12,3 +12,4 @@ chat_history.db
 chat_history.db-*
 reports/
 .env
+er_diagram.png
