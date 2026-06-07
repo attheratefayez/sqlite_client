@@ -82,13 +82,14 @@ class DataTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.CheckStateRole:
                 return Qt.CheckState.Checked if index.row() in self._checked else Qt.CheckState.Unchecked
             return None
+        value = self._rows[index.row()][col - 1]
         if role == Qt.ItemDataRole.DisplayRole:
-            value = self._rows[index.row()][col - 1]
             if value is None:
                 return "NULL"
             return str(value)
+        if role == Qt.ItemDataRole.EditRole:
+            return "" if value is None else value
         if role == Qt.ItemDataRole.ForegroundRole:
-            value = self._rows[index.row()][col - 1]
             if value is None:
                 return QColor("#808080")
         return None
