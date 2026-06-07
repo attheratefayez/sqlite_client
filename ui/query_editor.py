@@ -96,7 +96,8 @@ class QueryTab(QWidget):
 
         self._splitter.addWidget(editor_container)
         self._splitter.addWidget(self.results)
-        self._splitter.setSizes([300, 400])
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 1)
 
         layout.addWidget(self._splitter)
 

@@ -555,13 +555,12 @@ class TableTab(QWidget):
         font = QFont("monospace")
         font.setPointSize(10)
         self._ddl_view.setFont(font)
-        self._ddl_view.setMaximumHeight(200)
         splitter.addWidget(self._ddl_view)
 
         self._browser = DataBrowser(worker, table_name, columns, total_count)
         splitter.addWidget(self._browser)
 
-        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter)
 
