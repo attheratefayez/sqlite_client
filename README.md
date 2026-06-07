@@ -14,7 +14,8 @@ A PyQt6-based desktop SQLite database client. Open local `.db` files or database
 - **Data browser** — Paginated table browsing with adjustable page size (10–1000), search/filter across all columns, deferred inline cell editing via **Commit Changes** button, **add row** (with type-appropriate defaults for NOT NULL columns), batch delete with confirmation, double-click editing starts with current cell value
 - **Export** — Export tables or query results to CSV, JSON, or SQL INSERT statements
 - **Dark/Light mode** — Toggle via View menu, persisted across sessions
-- **App-state persistence** — Last-opened database, recent files list, and theme preference saved via `QSettings`
+- **Font selection** — Choose font family and size via **View > Font...** dialog, persisted across sessions
+- **App-state persistence** — Last-opened database, recent files list, theme, and font preference saved via `QSettings`
 - **Auto-refresh** — Local database files are watched via `QFileSystemWatcher`; Docker volume databases are polled every 30s for external changes and auto-refreshed
 - **Chat assistant** — Collapsible dock panel on the right side for natural-language queries about your database. Persists per-database chat history across sessions. Supports professional report generation (markdown + PDF) with a ``save`` / ``report`` / ``export`` command. **Clear history** button with confirmation dialog. Agent runs on its own background thread. Uses LangChain with HuggingFace models.
 - **Non-blocking operations** — All database reads, writes, and chat-agent calls execute on dedicated worker threads so the GUI never freezes
