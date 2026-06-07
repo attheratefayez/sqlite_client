@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction
 
 from core.database import DatabaseConnection
+from core.docker_volume import copy_to_volume, cleanup_local, DockerError, DockerVolumeInfo
 from core.worker import DatabaseWorker
 from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         """Initialize the main window, menus, UI layout, and status bar."""
         super().__init__()
         self._db = DatabaseConnection()
+        self._docker_sources: dict[str, DockerVolumeInfo] = {}
         self.setWindowTitle("SQLite Client")
         self.resize(1200, 800)
 
@@ -249,7 +251,7 @@ class MainWindow(QMainWindow):
         files.insert(0, path)
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
-    def _connect_database(self, path: str) -> bool:
+    def _connect_database(self, path: str, docker_source: tuple[str, str] | None = None) -> bool:
         try:
             self._db.close()
             self._db.connect(path)
@@ -259,9 +261,16 @@ class MainWindow(QMainWindow):
             self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
             self._er_action.setEnabled(True)
-            self._add_recent_file(path)
-            self._settings.setValue("last_database", path)
-            self._status_label.setText(f"Connected: {self._db.path}")
+            if docker_source is not None:
+                vol, rpath = docker_source
+                self._docker_sources[path] = DockerVolumeInfo(
+                    volume_name=vol, remote_path=rpath, local_path=path,
+                )
+                self._status_label.setText(f"Connected: {vol}/{rpath}")
+            else:
+                self._add_recent_file(path)
+                self._settings.setValue("last_database", path)
+                self._status_label.setText(f"Connected: {self._db.path}")
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open database:\n{e}")
@@ -273,11 +282,14 @@ class MainWindow(QMainWindow):
             return
         path = dlg.selected_path
         if path:
-            self._connect_database(path)
+            self._connect_database(path, docker_source=dlg.docker_source)
 
     def _load_last_database(self) -> None:
         path = self._settings.value("last_database", "")
         if not path or not pathlib.Path(path).exists():
+            return
+        docker_source_raw = self._settings.value("last_docker_source", "")
+        if docker_source_raw:
             return
         try:
             self._db.connect(path)
@@ -292,6 +304,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_close_database(self):
+        self._maybe_sync_docker_back()
         self._close_worker_db.emit()
         self._chat_set_db.emit("")
         self._db.close()
@@ -300,6 +313,32 @@ class MainWindow(QMainWindow):
         self._close_action.setEnabled(False)
         self._er_action.setEnabled(False)
         self._status_label.setText("No database open")
+
+    def _maybe_sync_docker_back(self) -> None:
+        path = self._db.path
+        if not path or path not in self._docker_sources:
+            return
+        info = self._docker_sources[path]
+        reply = QMessageBox.question(
+            self, "Sync to Docker Volume",
+            f"Save changes back to Docker volume?\n\n{info.volume_name}/{info.remote_path}",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                copy_to_volume(info.volume_name, info.remote_path, info.local_path)
+            except DockerError as e:
+                QMessageBox.critical(
+                    self, "Docker Sync Error",
+                    f"Failed to save back to Docker volume:\n{e}\n\n"
+                    f"Your changes are still in: {info.local_path}",
+                )
+        cleanup_local(info.volume_name, info.local_path)
+        self._docker_sources.pop(path, None)
 
     def _on_er_diagram(self):
         from ui.er_dialog import ErDialog
@@ -359,6 +398,7 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
+        self._maybe_sync_docker_back()
         self._close_worker_db.emit()
         self._worker_thread.quit()
         self._worker_thread.wait(3000)

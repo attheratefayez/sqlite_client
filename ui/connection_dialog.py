@@ -12,12 +12,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from core.docker_volume import copy_from_volume, DockerError
+from ui.docker_volume_dialog import DockerVolumeDialog
+
 
 class ConnectionDialog(QDialog):
     """A modal dialog for selecting or creating a SQLite database.
 
     Attributes:
         _selected_path: The file path chosen by the user, or None.
+        _docker_source: Tuple of ``(volume_name, remote_path)`` if opened
+            from a Docker volume, or None.
     """
 
     def __init__(self, recent_files: list[str] | None = None, parent=None):
@@ -31,6 +36,7 @@ class ConnectionDialog(QDialog):
         self.setWindowTitle("Open Database")
         self.resize(500, 400)
         self._selected_path: str | None = None
+        self._docker_source: tuple[str, str] | None = None
 
         layout = QVBoxLayout(self)
 
@@ -45,6 +51,13 @@ class ConnectionDialog(QDialog):
         self._new_btn.clicked.connect(self._browse_create)
         btn_layout.addWidget(self._new_btn)
         layout.addLayout(btn_layout)
+
+        docker_btn_layout = QHBoxLayout()
+        self._docker_btn = QPushButton("From Docker Volume...")
+        self._docker_btn.clicked.connect(self._browse_docker_volume)
+        docker_btn_layout.addWidget(self._docker_btn)
+        docker_btn_layout.addStretch()
+        layout.addLayout(docker_btn_layout)
 
         layout.addWidget(QLabel("Recent databases:"))
         self._recent_list = QListWidget()
@@ -103,7 +116,29 @@ class ConnectionDialog(QDialog):
             self._selected_path = path
             self.accept()
 
+    def _browse_docker_volume(self) -> None:
+        """Open the Docker volume browser dialog."""
+        dlg = DockerVolumeDialog(self)
+        if dlg.exec() != DockerVolumeDialog.DialogCode.Accepted:
+            return
+        if dlg.volume_name and dlg.remote_path:
+            try:
+                local_path = copy_from_volume(dlg.volume_name, dlg.remote_path)
+                self._selected_path = local_path
+                self._docker_source = (dlg.volume_name, dlg.remote_path)
+                self.accept()
+            except DockerError as e:
+                QMessageBox.critical(
+                    self, "Docker Error",
+                    f"Failed to copy database from Docker volume:\n{e}",
+                )
+
     @property
     def selected_path(self) -> str | None:
         """str or None: The file path chosen by the user."""
         return self._selected_path
+
+    @property
+    def docker_source(self) -> tuple[str, str] | None:
+        """tuple of (volume_name, remote_path) or None if not from Docker."""
+        return self._docker_source
