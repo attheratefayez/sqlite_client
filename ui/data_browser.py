@@ -520,4 +520,10 @@ class DataBrowser(QWidget):
         dlg = ExportDialog(self._table_name, columns, rows, self)
         dlg.exec()
 
+    def refresh(self) -> None:
+        """Reload the current page without user prompt."""
+        if self._busy:
+            return
+        self._request_page()
+
     _quote = staticmethod(quote_identifier)

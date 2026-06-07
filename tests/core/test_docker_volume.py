@@ -164,16 +164,52 @@ class TestFindDatabaseFiles:
 # ---------------------------------------------------------------------------
 
 class TestCopyFromVolume:
+    @pytest.fixture(autouse=True)
+    def _setup_vol_dir(self, tmp_path):
+        """Use a temp dir as TEMP_ROOT so we can create real files."""
+        vol_dir = tmp_path / "my-vol"
+        vol_dir.mkdir(parents=True)
+        self._vol_dir = vol_dir
+        self._tmp_root = tmp_path
+        with patch("core.docker_volume.TEMP_ROOT", tmp_path):
+            yield
+
+    def _touch_db(self, safe_name: str) -> pathlib.Path:
+        """Create a real database file at the path copy_from_volume expects."""
+        p = self._vol_dir / safe_name
+        conn = __import__("sqlite3").connect(str(p))
+        conn.execute("CREATE TABLE t (x)")
+        conn.execute("INSERT INTO t VALUES (42)")
+        conn.commit()
+        conn.close()
+        return p
+
     def test_returns_local_path(self, mock_docker):
         mock_docker.return_value = _make_result()
+        p = self._touch_db("data.db")
         path = copy_from_volume("my-vol", "data.db")
-        assert path.startswith(str(TEMP_ROOT / "my-vol"))
-        assert path.endswith("data.db")
+        assert path == str(p)
+        assert os.path.isfile(path)
 
     def test_handles_subdirectory_remote_path(self, mock_docker):
         mock_docker.return_value = _make_result()
+        self._touch_db("sub_dir_data.db")
         path = copy_from_volume("my-vol", "sub/dir/data.db")
         assert "sub_dir_data.db" in path
+        assert os.path.isfile(path)
+
+    def test_copied_file_is_writable(self, mock_docker):
+        mock_docker.return_value = _make_result()
+        self._touch_db("data.db")
+        path = copy_from_volume("my-vol", "data.db")
+        conn = __import__("sqlite3").connect(path)
+        try:
+            conn.execute("INSERT INTO t VALUES (99)")
+            conn.commit()
+            rows = conn.execute("SELECT x FROM t ORDER BY x").fetchall()
+            assert rows == [(42,), (99,)]
+        finally:
+            conn.close()
 
     def test_docker_error(self, mock_docker):
         mock_docker.side_effect = subprocess.CalledProcessError(

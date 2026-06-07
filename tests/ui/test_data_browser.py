@@ -252,3 +252,93 @@ class TestDataBrowser:
         worker.close_database()
         conn.close()
         pathlib.Path(tmp.name).unlink(missing_ok=True)
+
+
+class TestDatabaseWorkerAddRow:
+    """Tests for DatabaseWorker request_add_row and _default_for_col."""
+
+    @pytest.fixture
+    def worker(self):
+        w = DatabaseWorker()
+        yield w
+
+    def test_default_for_col_notnull_text(self, worker):
+        c = ColumnInfo(0, "name", "TEXT", True, None, False)
+        assert worker._default_for_col(c) == ""
+
+    def test_default_for_col_notnull_int(self, worker):
+        c = ColumnInfo(0, "age", "INTEGER", True, None, False)
+        assert worker._default_for_col(c) == 0
+
+    def test_default_for_col_notnull_real(self, worker):
+        c = ColumnInfo(0, "score", "REAL", True, None, False)
+        assert worker._default_for_col(c) == 0.0
+
+    def test_default_for_col_notnull_bool(self, worker):
+        c = ColumnInfo(0, "active", "BOOLEAN", True, None, False)
+        assert worker._default_for_col(c) == 0
+
+    def test_default_for_col_notnull_blob(self, worker):
+        c = ColumnInfo(0, "data", "BLOB", True, None, False)
+        assert worker._default_for_col(c) == b""
+
+    def test_default_for_col_nullable(self, worker):
+        c = ColumnInfo(0, "nickname", "TEXT", False, None, False)
+        assert worker._default_for_col(c) is None
+
+    def test_default_for_col_with_default(self, worker):
+        c = ColumnInfo(0, "created", "DATETIME", False, "CURRENT_TIMESTAMP", False)
+        assert worker._default_for_col(c) is None
+
+    def test_default_for_col_notnull_with_default(self, worker):
+        c = ColumnInfo(0, "role", "TEXT", True, "'user'", False)
+        assert worker._default_for_col(c) is None
+
+    def test_default_for_col_varchar_with_parens(self, worker):
+        c = ColumnInfo(0, "email", "VARCHAR(100)", True, None, False)
+        assert worker._default_for_col(c) == ""
+
+    def test_request_add_row_with_defaults(self, worker, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        worker._db.connect(db_path)
+        worker._db.execute_script("""
+            CREATE TABLE t (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                age INTEGER DEFAULT 0
+            );
+        """)
+        worker._db.commit()
+
+        from core.database import ColumnInfo
+        cols = [
+            ColumnInfo(0, "id", "INTEGER", False, None, True),
+            ColumnInfo(1, "name", "TEXT", True, None, False),
+            ColumnInfo(2, "age", "INTEGER", False, "0", False),
+        ]
+        worker.request_add_row("t", cols)
+        rows = worker._db.execute("SELECT * FROM t")
+        assert len(rows) == 1
+        assert rows[0][1] == ""  # name defaulted to ''
+        assert rows[0][2] == 0   # age defaulted by SQLite
+
+    def test_request_add_row_double_insert(self, worker, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        worker._db.connect(db_path)
+        worker._db.execute_script("""
+            CREATE TABLE t (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL
+            );
+        """)
+        worker._db.commit()
+
+        from core.database import ColumnInfo
+        cols = [
+            ColumnInfo(0, "id", "INTEGER", False, None, True),
+            ColumnInfo(1, "label", "TEXT", True, None, False),
+        ]
+        worker.request_add_row("t", cols)
+        worker.request_add_row("t", cols)
+        rows = worker._db.execute("SELECT * FROM t")
+        assert len(rows) == 2

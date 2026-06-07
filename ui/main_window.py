@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
     QStatusBar, QMessageBox, QLabel, QDockWidget,
 )
-from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QFileSystemWatcher
 from PyQt6.QtGui import QAction
 
 from core.database import DatabaseConnection
@@ -37,12 +37,19 @@ class MainWindow(QMainWindow):
     _chat_set_db = pyqtSignal(str)
     _chat_set_models = pyqtSignal(str, str)
     _chat_load_history = pyqtSignal()
+    _chat_close_store = pyqtSignal()
 
     def __init__(self):
         """Initialize the main window, menus, UI layout, and status bar."""
         super().__init__()
         self._db = DatabaseConnection()
         self._docker_sources: dict[str, DockerVolumeInfo] = {}
+        self._fs_watcher = QFileSystemWatcher(self)
+        self._fs_watcher.fileChanged.connect(self._on_db_file_changed)
+        self._refresh_debounce = QTimer(self)
+        self._refresh_debounce.setSingleShot(True)
+        self._refresh_debounce.setInterval(500)
+        self._refresh_debounce.timeout.connect(self._do_refresh_all)
         self.setWindowTitle("SQLite Client")
         self.resize(1200, 800)
 
@@ -75,6 +82,7 @@ class MainWindow(QMainWindow):
         self._chat_set_db.connect(self._chat_worker.set_database_path)
         self._chat_set_models.connect(self._chat_worker.set_models)
         self._chat_load_history.connect(self._chat_worker.load_history)
+        self._chat_close_store.connect(self._chat_worker.close_store)
 
         self._setup_menu()
         self._setup_ui()
@@ -255,6 +263,7 @@ class MainWindow(QMainWindow):
         try:
             self._db.close()
             self._db.connect(path)
+            self._start_watching(path)
             self._open_worker_db.emit(path)
             self._chat_set_db.emit(path)
             self._schema_browser.set_database(self._db)
@@ -270,6 +279,7 @@ class MainWindow(QMainWindow):
             else:
                 self._add_recent_file(path)
                 self._settings.setValue("last_database", path)
+                self._settings.setValue("last_docker_source", "")
                 self._status_label.setText(f"Connected: {self._db.path}")
             return True
         except Exception as e:
@@ -293,6 +303,7 @@ class MainWindow(QMainWindow):
             return
         try:
             self._db.connect(path)
+            self._start_watching(path)
             self._open_worker_db.emit(path)
             self._chat_set_db.emit(path)
             self._schema_browser.set_database(self._db)
@@ -303,10 +314,41 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _start_watching(self, path: str) -> None:
+        self._fs_watcher.addPath(path)
+        wal_path = path + "-wal"
+        if pathlib.Path(wal_path).exists():
+            self._fs_watcher.addPath(wal_path)
+
+    def _stop_watching(self) -> None:
+        paths = list(self._fs_watcher.files())
+        if paths:
+            self._fs_watcher.removePaths(paths)
+
+    def _on_db_file_changed(self, path: str) -> None:
+        self._refresh_debounce.start()
+
+    def _do_refresh_all(self) -> None:
+        if not self._db.is_connected:
+            return
+        self._schema_browser._refresh()
+        for i in range(self._right_tabs.count()):
+            w = self._right_tabs.widget(i)
+            if hasattr(w, 'refresh'):
+                w.refresh()
+
     def _on_close_database(self):
+        self._stop_watching()
         self._maybe_sync_docker_back()
         self._close_worker_db.emit()
-        self._chat_set_db.emit("")
+        for i in range(self._right_tabs.count() - 1, 0, -1):
+            w = self._right_tabs.widget(i)
+            if w is not self._query_editor:
+                self._right_tabs.removeTab(i)
+        try:
+            self._chat_set_db.emit("")
+        except Exception:
+            pass
         self._db.close()
         self._schema_browser.set_database(None)
         self._query_editor.set_connected(False)
@@ -330,8 +372,9 @@ class MainWindow(QMainWindow):
             return
         if reply == QMessageBox.StandardButton.Yes:
             try:
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 copy_to_volume(info.volume_name, info.remote_path, info.local_path)
-            except DockerError as e:
+            except Exception as e:
                 QMessageBox.critical(
                     self, "Docker Sync Error",
                     f"Failed to save back to Docker volume:\n{e}\n\n"
@@ -398,11 +441,12 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
+        self._stop_watching()
         self._maybe_sync_docker_back()
         self._close_worker_db.emit()
         self._worker_thread.quit()
         self._worker_thread.wait(3000)
-        self._chat_worker.close_store()
+        self._chat_close_store.emit()
         self._chat_thread.quit()
         self._chat_thread.wait(3000)
         self._db.close()

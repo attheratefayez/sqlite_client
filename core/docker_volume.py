@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -162,6 +163,10 @@ def copy_from_volume(volume: str, remote_path: str) -> str:
         f"cp '/vol/{remote_path}' '/out/{volume}/{safe_name}'",
         timeout=60,
     )
+
+    tmp_path = local_path + ".tmp"
+    shutil.copyfile(local_path, tmp_path)
+    os.replace(tmp_path, local_path)
 
     conn = sqlite3.connect(local_path)
     try:

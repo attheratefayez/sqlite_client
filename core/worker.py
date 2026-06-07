@@ -5,6 +5,8 @@ dedicated :class:`QThread`.  All database reads and writes execute on the
 worker thread so the GUI stays responsive during long queries.
 """
 
+from typing import Any
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from core.database import DatabaseConnection, ColumnInfo, quote_identifier
@@ -112,19 +114,41 @@ class DatabaseWorker(QObject):
 
     # ── add row ─────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _default_for_col(c: ColumnInfo) -> Any:
+        if c.notnull and c.default_value is None:
+            t = c.col_type.upper().split("(")[0].strip()
+            if t in ("INTEGER", "INT", "SMALLINT", "BIGINT", "TINYINT", "BOOLEAN", "BOOL"):
+                return 0
+            if t in ("REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"):
+                return 0.0
+            if t == "BLOB":
+                return b""
+            return ""
+        return None
+
     def request_add_row(
         self,
         table_name: str,
         columns: list[ColumnInfo],
     ) -> None:
-        cols = ", ".join(quote_identifier(c.name) for c in columns)
-        placeholders = ", ".join("?" for _ in columns)
-        values = [None for _ in columns]
+        included: list[ColumnInfo] = []
+        values: list[Any] = []
+        for c in columns:
+            if c.default_value is not None:
+                continue
+            included.append(c)
+            values.append(self._default_for_col(c))
+        if not included:
+            sql = f"INSERT INTO {quote_identifier(table_name)} DEFAULT VALUES"
+            params = ()
+        else:
+            col_list = ", ".join(quote_identifier(c.name) for c in included)
+            placeholders = ", ".join("?" for _ in included)
+            sql = f"INSERT INTO {quote_identifier(table_name)} ({col_list}) VALUES ({placeholders})"
+            params = tuple(values)
         try:
-            self._db.execute(
-                f"INSERT INTO {quote_identifier(table_name)} ({cols}) VALUES ({placeholders})",
-                tuple(values),
-            )
+            self._db.execute(sql, params)
             self._db.commit()
             self.row_added.emit(table_name)
         except Exception as e:
