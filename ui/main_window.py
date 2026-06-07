@@ -18,7 +18,7 @@ from core.worker import DatabaseWorker
 from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
 from ui.connection_dialog import ConnectionDialog
-from ui.data_browser import DataBrowser
+from ui.data_browser import DataBrowser, TableTab
 from chat.chat_panel import ChatPanel
 from chat.worker import ChatWorker
 from chat.agent import (
@@ -456,8 +456,9 @@ class MainWindow(QMainWindow):
                 return
         columns = self._db.table_schema(table_name)
         total_count = self._db.table_row_count(table_name)
-        browser = DataBrowser(self._worker, table_name, columns, total_count)
-        idx = self._right_tabs.addTab(browser, table_name)
+        ddl = self._db.table_create_sql(table_name) or ""
+        tab = TableTab(self._worker, table_name, columns, total_count, ddl)
+        idx = self._right_tabs.addTab(tab, table_name)
         self._right_tabs.setCurrentIndex(idx)
 
     def _on_right_tab_close(self, index: int) -> None:

@@ -8,10 +8,10 @@ inline editing capabilities).
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QPushButton, QLabel, QSpinBox, QLineEdit, QCheckBox,
-    QMessageBox,
+    QMessageBox, QSplitter, QTextEdit,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 
 from core.database import ColumnInfo, quote_identifier
 from core.worker import DatabaseWorker
@@ -528,3 +528,42 @@ class DataBrowser(QWidget):
         self._request_page()
 
     _quote = staticmethod(quote_identifier)
+
+
+class TableTab(QWidget):
+    """A tab with a read-only CREATE TABLE DDL on top and DataBrowser below."""
+
+    def __init__(
+        self,
+        worker: DatabaseWorker,
+        table_name: str,
+        columns: list[ColumnInfo],
+        total_count: int,
+        ddl: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._table_name = table_name
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        self._ddl_view = QTextEdit()
+        self._ddl_view.setPlainText(ddl)
+        self._ddl_view.setReadOnly(True)
+        font = QFont("monospace")
+        font.setPointSize(10)
+        self._ddl_view.setFont(font)
+        self._ddl_view.setMaximumHeight(200)
+        splitter.addWidget(self._ddl_view)
+
+        self._browser = DataBrowser(worker, table_name, columns, total_count)
+        splitter.addWidget(self._browser)
+
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+
+    def refresh(self) -> None:
+        self._browser.refresh()
