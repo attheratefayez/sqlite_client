@@ -210,6 +210,15 @@ class DatabaseConnection:
             for row in rows
         ]
 
+    def table_create_sql(self, table_name: str) -> str | None:
+        """Return the CREATE TABLE/VIEW statement for *table_name*."""
+        conn = self._require_connection()
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name=? AND type IN ('table','view')",
+            (table_name,),
+        ).fetchone()
+        return row[0] if row else None
+
     def foreign_keys(self, table_name: str) -> list[ForeignKeyInfo]:
         """Return foreign key metadata for a given table.
 

@@ -4,8 +4,9 @@ Provides a :class:`SchemaBrowser` widget that displays tables and views
 in a tree structure, with column details shown as child items.
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
+from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu, QDialog, QVBoxLayout, QTextEdit, QPushButton
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QFont
 from core.database import DatabaseConnection
 
 
@@ -95,9 +96,31 @@ class SchemaBrowser(QTreeWidget):
             return
         table_name = data[1]
         menu = QMenu(self)
+        action = menu.addAction(f"Show CREATE TABLE — {table_name}")
+        action.triggered.connect(lambda: self._show_create_sql(table_name))
         action = menu.addAction(f"Show ER Diagram — {table_name}")
         action.triggered.connect(lambda: self.er_diagram_requested.emit(table_name))
         menu.exec(self.mapToGlobal(pos))
+
+    def _show_create_sql(self, table_name: str) -> None:
+        sql = self._db.table_create_sql(table_name) if self._db else None
+        if not sql:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"CREATE TABLE — {table_name}")
+        dlg.resize(600, 400)
+        layout = QVBoxLayout(dlg)
+        editor = QTextEdit()
+        editor.setPlainText(sql)
+        editor.setReadOnly(True)
+        font = QFont("monospace")
+        font.setPointSize(10)
+        editor.setFont(font)
+        layout.addWidget(editor)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+        dlg.exec()
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """Handle item clicks and emit the appropriate signal.
