@@ -40,24 +40,17 @@ class ConnectionDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Open existing database:"))
-
-        btn_layout = QHBoxLayout()
         self._open_btn = QPushButton("Browse for Database...")
         self._open_btn.clicked.connect(self._browse_open)
-        btn_layout.addWidget(self._open_btn)
+        layout.addWidget(self._open_btn)
 
         self._new_btn = QPushButton("Create New Database...")
         self._new_btn.clicked.connect(self._browse_create)
-        btn_layout.addWidget(self._new_btn)
-        layout.addLayout(btn_layout)
+        layout.addWidget(self._new_btn)
 
-        docker_btn_layout = QHBoxLayout()
         self._docker_btn = QPushButton("From Docker Volume...")
         self._docker_btn.clicked.connect(self._browse_docker_volume)
-        docker_btn_layout.addWidget(self._docker_btn)
-        docker_btn_layout.addStretch()
-        layout.addLayout(docker_btn_layout)
+        layout.addWidget(self._docker_btn)
 
         layout.addWidget(QLabel("Recent databases:"))
         self._recent_list = QListWidget()

@@ -6,6 +6,7 @@ main window based on saved settings.
 """
 
 import sys
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
@@ -22,6 +23,9 @@ def create_app() -> QApplication:
     app = QApplication(sys.argv)
     app.setApplicationName("SQLite Client")
     app.setOrganizationName("sqlite-client")
+    font = app.font()
+    font.setPointSize(10)
+    app.setFont(font)
     return app
 
 
