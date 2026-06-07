@@ -492,7 +492,7 @@ class MainWindow(QMainWindow):
             self._settings.value("font_family", "", type=str) or QApplication.font().family(),
             self._settings.value("font_size", 10, type=int),
         )
-        ok, font = QFontDialog.getFont(current, self, "Choose Application Font")
+        font, ok = QFontDialog.getFont(current, self, "Choose Application Font")
         if not ok:
             return
         self._settings.setValue("font_family", font.family())
