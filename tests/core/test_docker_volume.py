@@ -15,6 +15,7 @@ from core.docker_volume import (
     copy_from_volume,
     copy_to_volume,
     cleanup_local,
+    get_volume_file_stat,
     DockerError,
     DockerVolumeInfo,
     TEMP_ROOT,
@@ -280,3 +281,26 @@ class TestCleanupLocal:
 
         with patch("core.docker_volume.TEMP_ROOT", tmp_path):
             cleanup_local("my-vol", str(local))
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_volume_file_stat
+# ---------------------------------------------------------------------------
+
+class TestGetVolumeFileStat:
+    def test_returns_mtime_and_size(self, mock_docker):
+        mock_docker.return_value = _make_result("16384\n1717777200\n")
+        result = get_volume_file_stat("vol", "data.db")
+        assert result == (1717777200, 16384)
+
+    def test_returns_none_on_docker_error(self, mock_docker):
+        mock_docker.side_effect = subprocess.CalledProcessError(1, ["docker"], stderr="error")
+        assert get_volume_file_stat("vol", "data.db") is None
+
+    def test_returns_none_on_file_not_found(self, mock_docker):
+        mock_docker.return_value = _make_result("")
+        assert get_volume_file_stat("vol", "nope.db") is None
+
+    def test_returns_none_on_non_numeric_output(self, mock_docker):
+        mock_docker.return_value = _make_result("abc\n")
+        assert get_volume_file_stat("vol", "bad.db") is None

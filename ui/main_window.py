@@ -10,7 +10,10 @@ from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QFileSystem
 from PyQt6.QtGui import QAction
 
 from core.database import DatabaseConnection
-from core.docker_volume import copy_to_volume, cleanup_local, DockerError, DockerVolumeInfo
+from core.docker_volume import (
+    copy_to_volume, copy_from_volume, cleanup_local,
+    DockerError, DockerVolumeInfo, get_volume_file_stat,
+)
 from core.worker import DatabaseWorker
 from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
@@ -50,6 +53,9 @@ class MainWindow(QMainWindow):
         self._refresh_debounce.setSingleShot(True)
         self._refresh_debounce.setInterval(500)
         self._refresh_debounce.timeout.connect(self._do_refresh_all)
+        self._docker_poll_timer = QTimer(self)
+        self._docker_poll_timer.setInterval(30000)
+        self._docker_poll_timer.timeout.connect(self._on_docker_poll)
         self.setWindowTitle("SQLite Client")
         self.resize(1200, 800)
 
@@ -272,9 +278,13 @@ class MainWindow(QMainWindow):
             self._er_action.setEnabled(True)
             if docker_source is not None:
                 vol, rpath = docker_source
+                stat = get_volume_file_stat(vol, rpath)
+                mtime, size = stat if stat else (0, 0)
                 self._docker_sources[path] = DockerVolumeInfo(
                     volume_name=vol, remote_path=rpath, local_path=path,
+                    last_mtime=mtime, last_size=size,
                 )
+                self._docker_poll_timer.start()
                 self._status_label.setText(f"Connected: {vol}/{rpath}")
             else:
                 self._add_recent_file(path)
@@ -337,8 +347,33 @@ class MainWindow(QMainWindow):
             if hasattr(w, 'refresh'):
                 w.refresh()
 
+    def _on_docker_poll(self):
+        for local_path, info in list(self._docker_sources.items()):
+            try:
+                stat = get_volume_file_stat(info.volume_name, info.remote_path)
+                if stat is None:
+                    continue
+                mtime, size = stat
+                if mtime == info.last_mtime and size == info.last_size:
+                    continue
+                info.last_mtime = mtime
+                info.last_size = size
+                self._stop_watching()
+                self._db.close()
+                self._close_worker_db.emit()
+                copy_from_volume(info.volume_name, info.remote_path)
+                self._db.connect(local_path)
+                self._start_watching(local_path)
+                self._open_worker_db.emit(local_path)
+                self._do_refresh_all()
+            except DockerError as e:
+                self._status_label.setText(f"Docker poll error: {e}")
+            except Exception as e:
+                self._status_label.setText(f"Poll error: {e}")
+
     def _on_close_database(self):
         self._stop_watching()
+        self._docker_poll_timer.stop()
         self._maybe_sync_docker_back()
         self._close_worker_db.emit()
         for i in range(self._right_tabs.count() - 1, 0, -1):
@@ -382,6 +417,8 @@ class MainWindow(QMainWindow):
                 )
         cleanup_local(info.volume_name, info.local_path)
         self._docker_sources.pop(path, None)
+        if not self._docker_sources:
+            self._docker_poll_timer.stop()
 
     def _on_er_diagram(self):
         from ui.er_dialog import ErDialog
@@ -442,6 +479,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._stop_watching()
+        self._docker_poll_timer.stop()
         self._maybe_sync_docker_back()
         self._close_worker_db.emit()
         self._worker_thread.quit()

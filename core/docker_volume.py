@@ -24,6 +24,8 @@ class DockerVolumeInfo:
     volume_name: str
     remote_path: str
     local_path: str
+    last_mtime: int = 0
+    last_size: int = 0
 
 
 class DockerError(RuntimeError):
@@ -190,6 +192,34 @@ def copy_to_volume(volume: str, remote_path: str, local_path: str) -> None:
         f"cp '/out/{volume}/{safe_name}' '/vol/{remote_path}'",
         timeout=60,
     )
+
+
+# ---------------------------------------------------------------------------
+# Volume file stat (for change polling)
+# ---------------------------------------------------------------------------
+
+def get_volume_file_stat(volume: str, remote_path: str) -> tuple[int, int] | None:
+    """Return ``(mtime_epoch_seconds, size_bytes)`` of a file inside *volume*.
+
+    Returns ``None`` if the file doesn't exist or an error occurs.
+    """
+    try:
+        result = _docker(
+            "run", "--rm",
+            "-v", f"{volume}:/vol:ro",
+            "alpine:latest",
+            "sh", "-c",
+            f"wc -c < /vol/{remote_path}; echo; date -r /vol/{remote_path} +%s",
+            timeout=30,
+        )
+        lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
+        if not lines or not lines[0].isdigit():
+            return None
+        size = int(lines[0])
+        mtime = int(lines[1]) if len(lines) > 1 and lines[1].lstrip("-").isdigit() else 0
+        return mtime, size
+    except (DockerError, ValueError, IndexError):
+        return None
 
 
 def cleanup_local(volume: str, local_path: str) -> None:
