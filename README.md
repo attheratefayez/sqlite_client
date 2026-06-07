@@ -1,6 +1,6 @@
 # SQLite Client
 
-A PyQt6-based desktop SQLite database client with a tabbed interface, SQL query editor with syntax highlighting, table data browser with pagination and deferred inline editing, batch delete, export, ER diagram viewer, Docker volume browser, dark/light theme, app-state persistence, auto-refresh on external database changes, and an extensible chat assistant. All database operations and chat-agent calls run asynchronously on background threads to keep the UI responsive.
+A PyQt6-based desktop SQLite database client. Open local `.db` files or databases inside Docker volumes, browse tables, run SQL queries, visualize schemas as ER diagrams, and chat with an AI assistant about your data — all without freezing the UI.
 
 ![SQLite Client](sqlite_client.png)
 
