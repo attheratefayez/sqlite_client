@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         self._worker.query_finished.connect(
             self._query_editor._on_query_result
         )
+        self._worker.edits_committed.connect(self._on_edits_committed)
         self._right_tabs.addTab(self._query_editor, "Query")
 
         self._splitter.addWidget(self._right_tabs)
@@ -391,6 +392,21 @@ class MainWindow(QMainWindow):
         self._er_action.setEnabled(False)
         self._status_label.setText("No database open")
 
+    def _sync_docker_back(self) -> None:
+        path = self._db.path
+        if not path or path not in self._docker_sources:
+            return
+        info = self._docker_sources[path]
+        try:
+            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            copy_to_volume(info.volume_name, info.remote_path, info.local_path)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Docker Sync Error",
+                f"Failed to save back to Docker volume:\n{e}\n\n"
+                f"Your changes are still in: {info.local_path}",
+            )
+
     def _maybe_sync_docker_back(self) -> None:
         path = self._db.path
         if not path or path not in self._docker_sources:
@@ -404,21 +420,16 @@ class MainWindow(QMainWindow):
             | QMessageBox.StandardButton.Cancel,
         )
         if reply == QMessageBox.StandardButton.Cancel:
-            return
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                copy_to_volume(info.volume_name, info.remote_path, info.local_path)
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "Docker Sync Error",
-                    f"Failed to save back to Docker volume:\n{e}\n\n"
-                    f"Your changes are still in: {info.local_path}",
-                )
+            pass
+        elif reply == QMessageBox.StandardButton.Yes:
+            self._sync_docker_back()
         cleanup_local(info.volume_name, info.local_path)
         self._docker_sources.pop(path, None)
         if not self._docker_sources:
             self._docker_poll_timer.stop()
+
+    def _on_edits_committed(self, table_name: str) -> None:
+        self._sync_docker_back()
 
     def _on_er_diagram(self):
         from ui.er_dialog import ErDialog

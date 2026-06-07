@@ -144,10 +144,9 @@ def temp_dir() -> pathlib.Path:
 
 
 def copy_from_volume(volume: str, remote_path: str) -> str:
-    """Copy a DB file out of *volume* to a temp location.
+    """Copy a DB file (+ WAL if present) out of *volume* to a temp location.
 
     Returns the local path to the copy.
-    The copy is checkpointed (WAL truncated) so it is consistent.
     """
     import sqlite3
 
@@ -155,20 +154,30 @@ def copy_from_volume(volume: str, remote_path: str) -> str:
     vol_dir.mkdir(parents=True, exist_ok=True)
     safe_name = remote_path.replace("/", "_")
     local_path = str(vol_dir / safe_name)
+    wal_name = safe_name + "-wal"
 
+    copy_cmd = (
+        f"cp '/vol/{remote_path}' '/out/{volume}/{safe_name}'"
+        f" && (cp '/vol/{remote_path}-wal' '/out/{volume}/{wal_name}' 2>/dev/null || true)"
+    )
     _docker(
         "run", "--rm",
         "-v", f"{volume}:/vol:ro",
         "-v", f"{TEMP_ROOT}:/out",
         "alpine:latest",
-        "sh", "-c",
-        f"cp '/vol/{remote_path}' '/out/{volume}/{safe_name}'",
+        "sh", "-c", copy_cmd,
         timeout=60,
     )
 
     tmp_path = local_path + ".tmp"
     shutil.copyfile(local_path, tmp_path)
     os.replace(tmp_path, local_path)
+
+    wal_path = str(vol_dir / wal_name)
+    if pathlib.Path(wal_path).exists():
+        tmp_wal = wal_path + ".tmp"
+        shutil.copyfile(wal_path, tmp_wal)
+        os.replace(tmp_wal, wal_path)
 
     conn = sqlite3.connect(local_path)
     try:
@@ -177,19 +186,25 @@ def copy_from_volume(volume: str, remote_path: str) -> str:
     finally:
         conn.close()
 
+    pathlib.Path(local_path + "-shm").unlink(missing_ok=True)
+    pathlib.Path(local_path + "-wal").unlink(missing_ok=True)
+
     return local_path
 
 
 def copy_to_volume(volume: str, remote_path: str, local_path: str) -> None:
-    """Copy a local DB file back into *volume*, overwriting the remote file."""
+    """Copy a local DB file back into *volume*, removing stale WAL+SHM files."""
     safe_name = local_path.rsplit("/", 1)[-1]
+    rm_cmd = (
+        f"rm -f '/vol/{remote_path}-wal' '/vol/{remote_path}-shm'"
+    )
     _docker(
         "run", "--rm",
         "-v", f"{volume}:/vol",
         "-v", f"{TEMP_ROOT}:/out:ro",
         "alpine:latest",
         "sh", "-c",
-        f"cp '/out/{volume}/{safe_name}' '/vol/{remote_path}'",
+        f"{rm_cmd} && cp '/out/{volume}/{safe_name}' '/vol/{remote_path}'",
         timeout=60,
     )
 
@@ -223,9 +238,13 @@ def get_volume_file_stat(volume: str, remote_path: str) -> tuple[int, int] | Non
 
 
 def cleanup_local(volume: str, local_path: str) -> None:
-    """Remove a local DB copy and its parent directory if empty."""
+    """Remove a local DB copy (and any WAL/SHM) and empty parent dirs up to TEMP_ROOT."""
     vol_dir = TEMP_ROOT / volume
     safe_name = local_path.rsplit("/", 1)[-1]
     (vol_dir / safe_name).unlink(missing_ok=True)
+    (vol_dir / (safe_name + "-wal")).unlink(missing_ok=True)
+    (vol_dir / (safe_name + "-shm")).unlink(missing_ok=True)
     if vol_dir.exists() and not any(vol_dir.iterdir()):
         vol_dir.rmdir()
+    if TEMP_ROOT.exists() and not any(TEMP_ROOT.iterdir()):
+        TEMP_ROOT.rmdir()
