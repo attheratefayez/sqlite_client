@@ -94,8 +94,8 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_chat_dock()
         self._setup_status_bar()
-        self._apply_saved_theme()
         self._apply_saved_font()
+        self._apply_saved_theme()
 
         self._chat_worker.history_loaded.connect(self._chat_panel.load_history)
 
@@ -474,8 +474,13 @@ class MainWindow(QMainWindow):
 
     def _set_theme(self, dark: bool) -> None:
         app = QApplication.instance()
-        if app:
-            app.setStyleSheet(THEMES["dark" if dark else "light"])
+        if not app:
+            return
+        ss = THEMES["dark" if dark else "light"]
+        font = app.font()
+        font_rule = f"font-family: '{font.family()}'; font-size: {font.pointSize()}pt;"
+        ss = f"* {{{font_rule}}}\n\n{ss}"
+        app.setStyleSheet(ss)
 
     def _apply_saved_theme(self) -> None:
         dark = self._settings.value("dark_mode", False, type=bool)
@@ -497,15 +502,19 @@ class MainWindow(QMainWindow):
             return
         self._settings.setValue("font_family", font.family())
         self._settings.setValue("font_size", font.pointSize())
-        QApplication.instance().setFont(font)
+        app = QApplication.instance()
+        app.setFont(font)
+        dark = self._settings.value("dark_mode", False, type=bool)
+        self._set_theme(dark)
 
     def _apply_saved_font(self) -> None:
         family = self._settings.value("font_family", "", type=str)
         size = self._settings.value("font_size", 0, type=int)
         if not family or not size:
             return
+        app = QApplication.instance()
         font = QFont(family, size)
-        QApplication.instance().setFont(font)
+        app.setFont(font)
 
     def _on_about(self):
         QMessageBox.about(
