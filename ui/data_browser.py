@@ -561,8 +561,8 @@ class TableTab(QWidget):
         splitter.addWidget(self._browser)
 
         splitter.setSizes([450, 550])
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(0, 45)
+        splitter.setStretchFactor(1, 55)
         layout.addWidget(splitter)
 
     def refresh(self) -> None:
