@@ -5,8 +5,7 @@ import pathlib
 from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
     QStatusBar, QMessageBox, QLabel, QDockWidget, QFontDialog,
-    QListWidget, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton,
+    QTreeWidget, QTreeWidgetItem, QMenu,
 )
 from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QFileSystemWatcher
 from PyQt6.QtGui import QAction, QFont
@@ -17,7 +16,6 @@ from core.docker_volume import (
     DockerError, DockerVolumeInfo, get_volume_file_stat,
 )
 from core.worker import DatabaseWorker
-from ui.schema_browser import SchemaBrowser
 from ui.query_editor import QueryEditorWidget
 from ui.connection_dialog import ConnectionDialog
 from ui.data_browser import DataBrowser, TableTab
@@ -51,7 +49,6 @@ class MainWindow(QMainWindow):
         self._databases: dict[str, DatabaseConnection] = {}
         self._active_path: str | None = None
         self._docker_sources: dict[str, DockerVolumeInfo] = {}
-        self._schema_browsers: dict[str, SchemaBrowser] = {}
         self._fs_watcher = QFileSystemWatcher(self)
         self._fs_watcher.fileChanged.connect(self._on_db_file_changed)
         self._refresh_debounce = QTimer(self)
@@ -178,23 +175,12 @@ class MainWindow(QMainWindow):
         self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.setCentralWidget(self._splitter)
 
-        self._schema_list = QListWidget()
-        self._schema_list.setFixedWidth(150)
-        self._schema_list.currentRowChanged.connect(self._on_schema_list_changed)
-        self._schema_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._schema_list.customContextMenuRequested.connect(self._on_schema_list_context)
-
-        self._schema_stack = QStackedWidget()
-
-        left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(0)
-        left_layout.addWidget(self._schema_list)
-        left_layout.addWidget(self._schema_stack)
-
-        left_widget = QWidget()
-        left_widget.setLayout(left_layout)
-        self._splitter.addWidget(left_widget)
+        self._schema_tree = QTreeWidget()
+        self._schema_tree.setHeaderHidden(True)
+        self._schema_tree.itemClicked.connect(self._on_schema_tree_clicked)
+        self._schema_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._schema_tree.customContextMenuRequested.connect(self._on_schema_tree_context)
+        self._splitter.addWidget(self._schema_tree)
 
         self._right_tabs = QTabWidget()
         self._right_tabs.setTabsClosable(True)
@@ -296,23 +282,46 @@ class MainWindow(QMainWindow):
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
     def _add_schema_tab(self, path: str) -> None:
-        browser = SchemaBrowser()
-        browser.table_selected.connect(
-            lambda name, p=path: self._on_table_selected(p, name)
-        )
-        browser.view_selected.connect(
-            lambda name, p=path: self._on_view_selected(p, name)
-        )
-        browser.er_diagram_requested.connect(
-            lambda name, p=path: self._on_er_diagram_for_table(p, name)
-        )
-        browser.set_database(self._databases[path])
-        self._schema_browsers[path] = browser
-        tab_name = pathlib.Path(path).stem
-        self._schema_list.addItem(tab_name)
-        self._schema_stack.addWidget(browser)
-        self._schema_list.setCurrentRow(self._schema_list.count() - 1)
-        return browser
+        db_name = pathlib.Path(path).stem
+        root = QTreeWidgetItem(self._schema_tree, [db_name])
+        root.setData(0, Qt.ItemDataRole.UserRole, ("db_root", path))
+        font = root.font(0)
+        font.setBold(True)
+        root.setFont(0, font)
+        root.setExpanded(True)
+
+        tables_node = QTreeWidgetItem(root, ["Tables"])
+        tables_node.setData(0, Qt.ItemDataRole.UserRole, ("tables_node", path))
+        tables_font = tables_node.font(0)
+        tables_font.setBold(True)
+        tables_node.setFont(0, tables_font)
+        tables_node.setExpanded(True)
+
+        db = self._databases.get(path)
+        if db:
+            for table_name in db.tables():
+                item = QTreeWidgetItem(tables_node, [table_name])
+                item.setData(0, Qt.ItemDataRole.UserRole, ("table", path, table_name))
+                columns = db.table_schema(table_name)
+                for col in columns:
+                    col_text = f"{col.name}  {col.col_type}"
+                    if col.primary_key:
+                        col_text += " PK"
+                    if col.notnull:
+                        col_text += " NOT NULL"
+                    if col.default_value is not None:
+                        col_text += f" DEFAULT {col.default_value}"
+                    col_item = QTreeWidgetItem(item, [col_text])
+                    col_item.setData(0, Qt.ItemDataRole.UserRole, ("column", path, table_name, col.name))
+
+            views_node = QTreeWidgetItem(root, ["Views"])
+            views_node.setData(0, Qt.ItemDataRole.UserRole, ("views_node", path))
+            views_node.setFont(0, tables_font)
+            for view_name in db.views():
+                item = QTreeWidgetItem(views_node, [view_name])
+                item.setData(0, Qt.ItemDataRole.UserRole, ("view", path, view_name))
+
+        self._schema_tree.setCurrentItem(root)
 
     def _connect_database(self, path: str, docker_source: tuple[str, str] | None = None) -> bool:
         try:
@@ -390,13 +399,53 @@ class MainWindow(QMainWindow):
         self._refresh_debounce.start()
 
     def _do_refresh_all(self) -> None:
-        for path, browser in self._schema_browsers.items():
-            if self._databases.get(path) and self._databases[path].is_connected:
-                browser._refresh()
+        for i in range(self._schema_tree.topLevelItemCount()):
+            root = self._schema_tree.topLevelItem(i)
+            data = root.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data[0] == "db_root":
+                path = data[1]
+                self._rebuild_db_tree(path, root)
         for i in range(self._right_tabs.count()):
             w = self._right_tabs.widget(i)
             if hasattr(w, 'refresh'):
                 w.refresh()
+
+    def _rebuild_db_tree(self, path: str, root: QTreeWidgetItem) -> None:
+        """Rebuild the tables/views children under a database root item."""
+        db = self._databases.get(path)
+        if not db or not db.is_connected:
+            return
+        while root.childCount() > 0:
+            root.removeChild(root.child(0))
+
+        tables_node = QTreeWidgetItem(root, ["Tables"])
+        tables_node.setData(0, Qt.ItemDataRole.UserRole, ("tables_node", path))
+        tables_font = tables_node.font(0)
+        tables_font.setBold(True)
+        tables_node.setFont(0, tables_font)
+        tables_node.setExpanded(True)
+
+        for table_name in db.tables():
+            item = QTreeWidgetItem(tables_node, [table_name])
+            item.setData(0, Qt.ItemDataRole.UserRole, ("table", path, table_name))
+            columns = db.table_schema(table_name)
+            for col in columns:
+                col_text = f"{col.name}  {col.col_type}"
+                if col.primary_key:
+                    col_text += " PK"
+                if col.notnull:
+                    col_text += " NOT NULL"
+                if col.default_value is not None:
+                    col_text += f" DEFAULT {col.default_value}"
+                col_item = QTreeWidgetItem(item, [col_text])
+                col_item.setData(0, Qt.ItemDataRole.UserRole, ("column", path, table_name, col.name))
+
+        views_node = QTreeWidgetItem(root, ["Views"])
+        views_node.setData(0, Qt.ItemDataRole.UserRole, ("views_node", path))
+        views_node.setFont(0, tables_font)
+        for view_name in db.views():
+            item = QTreeWidgetItem(views_node, [view_name])
+            item.setData(0, Qt.ItemDataRole.UserRole, ("view", path, view_name))
 
     def _on_docker_poll(self):
         for local_path, info in list(self._docker_sources.items()):
@@ -427,35 +476,52 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self._status_label.setText(f"Poll error: {e}")
 
-    def _on_schema_list_changed(self, row: int) -> None:
-        widget = self._schema_stack.widget(row)
-        path = None
-        for p, w in self._schema_browsers.items():
-            if w is widget:
-                path = p
-                break
-        self._active_path = path
-        if path:
-            self._schema_stack.setCurrentWidget(widget)
+    def _on_schema_tree_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, tuple):
+            return
+        kind = data[0]
+        if kind == "table":
+            path, table_name = data[1], data[2]
+            self._active_path = path
+            self._on_table_selected(path, table_name)
+        elif kind == "view":
+            path, view_name = data[1], data[2]
+            self._on_view_selected(path, view_name)
+        elif kind == "db_root":
+            path = data[1]
+            self._active_path = path
             self._set_active_worker_db.emit(path)
             self._chat_set_db.emit(path)
             db_label = self._docker_sources[path].volume_name if path in self._docker_sources else path
             self._status_label.setText(f"Active: {db_label}")
             self._close_action.setEnabled(True)
-        else:
-            self._chat_set_db.emit("")
-            self._status_label.setText("No database open")
 
-    def _on_schema_list_context(self, pos):
-        item = self._schema_list.itemAt(pos)
+    def _on_schema_tree_context(self, pos):
+        item = self._schema_tree.itemAt(pos)
         if item is None:
             return
-        row = self._schema_list.row(item)
-        widget = self._schema_stack.widget(row)
-        for path, w in self._schema_browsers.items():
-            if w is widget:
-                self._close_database_by_path(path)
-                return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, tuple):
+            return
+        path = None
+        if data[0] in ("db_root", "tables_node", "views_node"):
+            path = data[1]
+        elif data[0] in ("table", "view"):
+            path = data[1]
+        elif data[0] == "column":
+            path = data[2]
+        if path is None:
+            return
+
+        menu = QMenu(self)
+        close_act = menu.addAction(f"Close {pathlib.Path(path).stem}")
+        close_act.triggered.connect(lambda: self._close_database_by_path(path))
+        if data[0] == "table":
+            menu.addSeparator()
+            er_act = menu.addAction(f"ER Diagram — {data[2]}")
+            er_act.triggered.connect(lambda: self._on_er_diagram_for_table(path, data[2]))
+        menu.exec(self._schema_tree.mapToGlobal(pos))
 
     def _close_database_by_path(self, path: str) -> None:
         was_active = path == self._active_path
@@ -465,13 +531,12 @@ class MainWindow(QMainWindow):
         db = self._databases.pop(path, None)
         if db:
             db.close()
-        browser = self._schema_browsers.pop(path, None)
-        if browser:
-            idx = self._schema_stack.indexOf(browser)
-            if idx >= 0:
-                self._schema_stack.removeWidget(browser)
-                self._schema_list.takeItem(idx)
-            browser.deleteLater()
+        for i in range(self._schema_tree.topLevelItemCount()):
+            root = self._schema_tree.topLevelItem(i)
+            data = root.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(data, tuple) and data[0] == "db_root" and data[1] == path:
+                self._schema_tree.takeTopLevelItem(i)
+                break
         for i in range(self._right_tabs.count() - 1, 0, -1):
             w = self._right_tabs.widget(i)
             if w is not self._query_editor:

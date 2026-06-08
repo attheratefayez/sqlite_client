@@ -5,7 +5,6 @@ from PyQt6.QtCore import QSettings
 from core.database import DatabaseConnection
 from ui.main_window import MainWindow
 from ui.query_editor import QueryEditorWidget
-from ui.schema_browser import SchemaBrowser
 
 
 @pytest.fixture
@@ -72,9 +71,9 @@ class TestMainWindow:
 
     def test_schema_browser_exists(self, window, sample_db_path):
         window._connect_database(sample_db_path)
-        assert len(window._schema_browsers) == 1
-        browser = list(window._schema_browsers.values())[0]
-        assert isinstance(browser, SchemaBrowser)
+        assert window._schema_tree.topLevelItemCount() == 1
+        root = window._schema_tree.topLevelItem(0)
+        assert root.text(0) == pathlib.Path(sample_db_path).stem
 
     def test_right_tabs_has_query_tab(self, window):
         assert window._right_tabs.count() >= 1
@@ -123,11 +122,9 @@ class TestMainWindow:
         window._connect_database(sample_db_path)
         window._connect_database(db2_path)
         assert len(window._databases) == 2
-        assert len(window._schema_browsers) == 2
-        assert window._schema_list.count() == 2
+        assert window._schema_tree.topLevelItemCount() == 2
         assert window._active_path == db2_path
         window._on_close_database()
         assert len(window._databases) == 1
-        assert len(window._schema_browsers) == 1
-        assert window._schema_list.count() == 1
+        assert window._schema_tree.topLevelItemCount() == 1
         assert window._active_path == sample_db_path
