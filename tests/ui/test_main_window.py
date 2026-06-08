@@ -124,10 +124,10 @@ class TestMainWindow:
         window._connect_database(db2_path)
         assert len(window._databases) == 2
         assert len(window._schema_browsers) == 2
-        assert window._schema_tabs.count() == 2
+        assert window._schema_list.count() == 2
         assert window._active_path == db2_path
         window._on_close_database()
         assert len(window._databases) == 1
         assert len(window._schema_browsers) == 1
-        assert window._schema_tabs.count() == 1
+        assert window._schema_list.count() == 1
         assert window._active_path == sample_db_path

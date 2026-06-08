@@ -5,6 +5,8 @@ import pathlib
 from PyQt6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget, QApplication,
     QStatusBar, QMessageBox, QLabel, QDockWidget, QFontDialog,
+    QListWidget, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton,
 )
 from PyQt6.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QFileSystemWatcher
 from PyQt6.QtGui import QAction, QFont
@@ -176,12 +178,23 @@ class MainWindow(QMainWindow):
         self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.setCentralWidget(self._splitter)
 
-        self._schema_tabs = QTabWidget()
-        self._schema_tabs.setTabPosition(QTabWidget.TabPosition.West)
-        self._schema_tabs.setTabsClosable(True)
-        self._schema_tabs.tabCloseRequested.connect(self._on_schema_tab_close)
-        self._schema_tabs.currentChanged.connect(self._on_active_db_changed)
-        self._splitter.addWidget(self._schema_tabs)
+        self._schema_list = QListWidget()
+        self._schema_list.setFixedWidth(150)
+        self._schema_list.currentRowChanged.connect(self._on_schema_list_changed)
+        self._schema_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._schema_list.customContextMenuRequested.connect(self._on_schema_list_context)
+
+        self._schema_stack = QStackedWidget()
+
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(self._schema_list)
+        left_layout.addWidget(self._schema_stack)
+
+        left_widget = QWidget()
+        left_widget.setLayout(left_layout)
+        self._splitter.addWidget(left_widget)
 
         self._right_tabs = QTabWidget()
         self._right_tabs.setTabsClosable(True)
@@ -282,7 +295,7 @@ class MainWindow(QMainWindow):
         files.insert(0, path)
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
-    def _add_schema_tab(self, path: str) -> SchemaBrowser:
+    def _add_schema_tab(self, path: str) -> None:
         browser = SchemaBrowser()
         browser.table_selected.connect(
             lambda name, p=path: self._on_table_selected(p, name)
@@ -296,8 +309,9 @@ class MainWindow(QMainWindow):
         browser.set_database(self._databases[path])
         self._schema_browsers[path] = browser
         tab_name = pathlib.Path(path).stem
-        self._schema_tabs.addTab(browser, tab_name)
-        self._schema_tabs.setCurrentWidget(browser)
+        self._schema_list.addItem(tab_name)
+        self._schema_stack.addWidget(browser)
+        self._schema_list.setCurrentRow(self._schema_list.count() - 1)
         return browser
 
     def _connect_database(self, path: str, docker_source: tuple[str, str] | None = None) -> bool:
@@ -413,8 +427,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self._status_label.setText(f"Poll error: {e}")
 
-    def _on_active_db_changed(self, index: int) -> None:
-        widget = self._schema_tabs.widget(index)
+    def _on_schema_list_changed(self, row: int) -> None:
+        widget = self._schema_stack.widget(row)
         path = None
         for p, w in self._schema_browsers.items():
             if w is widget:
@@ -422,6 +436,7 @@ class MainWindow(QMainWindow):
                 break
         self._active_path = path
         if path:
+            self._schema_stack.setCurrentWidget(widget)
             self._set_active_worker_db.emit(path)
             self._chat_set_db.emit(path)
             db_label = self._docker_sources[path].volume_name if path in self._docker_sources else path
@@ -430,6 +445,17 @@ class MainWindow(QMainWindow):
         else:
             self._chat_set_db.emit("")
             self._status_label.setText("No database open")
+
+    def _on_schema_list_context(self, pos):
+        item = self._schema_list.itemAt(pos)
+        if item is None:
+            return
+        row = self._schema_list.row(item)
+        widget = self._schema_stack.widget(row)
+        for path, w in self._schema_browsers.items():
+            if w is widget:
+                self._close_database_by_path(path)
+                return
 
     def _close_database_by_path(self, path: str) -> None:
         was_active = path == self._active_path
@@ -441,9 +467,10 @@ class MainWindow(QMainWindow):
             db.close()
         browser = self._schema_browsers.pop(path, None)
         if browser:
-            idx = self._schema_tabs.indexOf(browser)
+            idx = self._schema_stack.indexOf(browser)
             if idx >= 0:
-                self._schema_tabs.removeTab(idx)
+                self._schema_stack.removeWidget(browser)
+                self._schema_list.takeItem(idx)
             browser.deleteLater()
         for i in range(self._right_tabs.count() - 1, 0, -1):
             w = self._right_tabs.widget(i)
@@ -468,13 +495,6 @@ class MainWindow(QMainWindow):
     def _on_close_database(self):
         if self._active_path:
             self._close_database_by_path(self._active_path)
-
-    def _on_schema_tab_close(self, index: int) -> None:
-        widget = self._schema_tabs.widget(index)
-        for path, w in self._schema_browsers.items():
-            if w is widget:
-                self._close_database_by_path(path)
-                return
 
     def _sync_docker_back(self) -> None:
         path = self._active_path
