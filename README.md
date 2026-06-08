@@ -6,7 +6,7 @@ A PyQt6-based desktop SQLite database client. Open local `.db` files or database
 
 ## Features
 
-- **Database connection management** — Open existing `.db`/`.sqlite` files, create new databases, or browse and open databases from **Docker volumes** via a tree-view dialog with file picker, recent files list, or volume browser
+- **Database connection management** — Open existing `.db`/`.sqlite` files, create new databases, or browse and open databases from **Docker volumes** via a tree-view dialog with file picker, recent files list, or volume browser. **Multiple databases** can be open simultaneously — each gets its own tab in the schema browser with independent tables, queries, and data views.
 - **Schema browser** — Tree view of tables (with column names, types, primary keys, nullable, default values) and views, with context menu for ER diagram
 - **ER diagram viewer** — Auto-layout entity-relationship diagrams with connected-component clustering, bezier FK→PK edges, exported as high-resolution PNG (3x oversampled, 150 DPI)
 - **SQL query editor** — Multi-tab editor with SQL syntax highlighting and `Ctrl+Enter` execution
