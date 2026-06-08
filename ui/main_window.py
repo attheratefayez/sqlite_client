@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._splitter)
 
         self._schema_tabs = QTabWidget()
+        self._schema_tabs.setTabPosition(QTabWidget.TabPosition.West)
         self._schema_tabs.setTabsClosable(True)
         self._schema_tabs.tabCloseRequested.connect(self._on_schema_tab_close)
         self._schema_tabs.currentChanged.connect(self._on_active_db_changed)
