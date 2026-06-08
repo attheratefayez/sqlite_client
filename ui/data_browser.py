@@ -560,9 +560,9 @@ class TableTab(QWidget):
         self._browser = DataBrowser(worker, table_name, columns, total_count)
         splitter.addWidget(self._browser)
 
-        splitter.setSizes([400, 600])
-        splitter.setStretchFactor(0, 40)
-        splitter.setStretchFactor(1, 60)
+        splitter.setSizes([350, 650])
+        splitter.setStretchFactor(0, 35)
+        splitter.setStretchFactor(1, 65)
         layout.addWidget(splitter)
 
     def refresh(self) -> None:
