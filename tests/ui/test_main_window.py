@@ -44,54 +44,54 @@ class TestMainWindow:
         assert "No database open" in window._status_label.text()
 
     def test_open_database(self, window, qtbot, sample_db_path):
-        window._db.connect(sample_db_path)
-        window._schema_browser.set_database(window._db)
-        window._query_editor.set_connected(True)
-        window._close_action.setEnabled(True)
-        window._status_label.setText(f"Connected: {window._db.path}")
-
-        assert window._db.is_connected
+        window._connect_database(sample_db_path)
+        assert window._active_path == sample_db_path
+        assert window._active_db is not None
+        assert window._active_db.is_connected
         assert window._close_action.isEnabled()
         assert "Connected" in window._status_label.text()
 
     def test_close_database(self, window, qtbot, sample_db_path):
-        window._db.connect(sample_db_path)
-        window._schema_browser.set_database(window._db)
-        window._close_action.setEnabled(True)
-
+        window._connect_database(sample_db_path)
+        assert window._active_db is not None
         window._on_close_database()
-        assert not window._db.is_connected
+        assert window._active_db is None
         assert not window._close_action.isEnabled()
         assert "No database open" in window._status_label.text()
 
     def test_close_event_closes_db(self, window, qtbot, sample_db_path):
-        window._db.connect(sample_db_path)
-        assert window._db.is_connected
+        window._connect_database(sample_db_path)
+        assert window._active_db is not None
+        assert window._active_db.is_connected
+        path = window._active_path
         window.close()
-        assert not window._db.is_connected
+        assert not window._databases.get(path) or not window._databases[path].is_connected
 
     def test_query_editor_exists(self, window):
         assert isinstance(window._query_editor, QueryEditorWidget)
 
-    def test_schema_browser_exists(self, window):
-        assert isinstance(window._schema_browser, SchemaBrowser)
+    def test_schema_browser_exists(self, window, sample_db_path):
+        window._connect_database(sample_db_path)
+        assert len(window._schema_browsers) == 1
+        browser = list(window._schema_browsers.values())[0]
+        assert isinstance(browser, SchemaBrowser)
 
     def test_right_tabs_has_query_tab(self, window):
         assert window._right_tabs.count() >= 1
 
     def test_open_data_browser_adds_tab(self, window, sample_db_path, qtbot):
-        window._db.connect(sample_db_path)
+        window._connect_database(sample_db_path)
         window._worker.open_database(sample_db_path)
         count = window._right_tabs.count()
-        window._open_data_browser("test")
+        window._open_data_browser(sample_db_path, "test")
         assert window._right_tabs.count() == count + 1
 
     def test_open_data_browser_reuses_tab(self, window, sample_db_path, qtbot):
-        window._db.connect(sample_db_path)
+        window._connect_database(sample_db_path)
         window._worker.open_database(sample_db_path)
-        window._open_data_browser("test")
+        window._open_data_browser(sample_db_path, "test")
         count = window._right_tabs.count()
-        window._open_data_browser("test")
+        window._open_data_browser(sample_db_path, "test")
         assert window._right_tabs.count() == count
 
     def test_right_tab_close_query_tab_blocked(self, window):
@@ -112,3 +112,22 @@ class TestMainWindow:
     def test_dark_mode_menu_item_exists(self, window):
         assert window._dark_mode_action is not None
         assert "Dark" in window._dark_mode_action.text()
+
+    def test_multiple_databases(self, window, qtbot, sample_db_path, tmp_path):
+        db2_path = str(tmp_path / "multi_test.db")
+        conn = DatabaseConnection()
+        conn.connect(db2_path)
+        conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.commit()
+        conn.close()
+        window._connect_database(sample_db_path)
+        window._connect_database(db2_path)
+        assert len(window._databases) == 2
+        assert len(window._schema_browsers) == 2
+        assert window._schema_tabs.count() == 2
+        assert window._active_path == db2_path
+        window._on_close_database()
+        assert len(window._databases) == 1
+        assert len(window._schema_browsers) == 1
+        assert window._schema_tabs.count() == 1
+        assert window._active_path == sample_db_path

@@ -16,6 +16,10 @@ from core.query_executor import QueryExecutor, QueryResult
 class DatabaseWorker(QObject):
     """Performs database operations on a background thread.
 
+    Supports multiple concurrent database connections.  Each connection is
+    identified by its resolved file path.  Only the *active* connection
+    is used for query / data-browser / edit operations.
+
     Create one, call :meth:`moveToThread`, start the thread, then
     connect signals to its ``request_*`` slots and receive results via
     the ``*_finished`` / ``error`` signals.
@@ -41,16 +45,40 @@ class DatabaseWorker(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._db = DatabaseConnection()
+        self._connections: dict[str, DatabaseConnection] = {}
+        self._active_path: str | None = None
 
-    # ── lifecycle ────────────────────────────────────────────────────────
+    # ── connection management ──────────────────────────────────────────
+
+    @property
+    def _db(self) -> DatabaseConnection:
+        if self._active_path is None or self._active_path not in self._connections:
+            raise RuntimeError("No active database connection")
+        return self._connections[self._active_path]
 
     def open_database(self, path: str) -> None:
-        self._db.close()
-        self._db.connect(path)
+        if path not in self._connections:
+            db = DatabaseConnection()
+            db.connect(path)
+            self._connections[path] = db
+        self._active_path = path
 
-    def close_database(self) -> None:
-        self._db.close()
+    def set_active_database(self, path: str) -> None:
+        if path in self._connections:
+            self._active_path = path
+
+    def close_database(self, path: str) -> None:
+        if path in self._connections:
+            self._connections[path].close()
+            del self._connections[path]
+        if self._active_path == path:
+            self._active_path = next(iter(self._connections)) if self._connections else None
+
+    def close_all(self) -> None:
+        for db in self._connections.values():
+            db.close()
+        self._connections.clear()
+        self._active_path = None
 
     # ── query-editor execution ──────────────────────────────────────────
 

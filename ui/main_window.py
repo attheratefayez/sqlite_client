@@ -36,7 +36,8 @@ class MainWindow(QMainWindow):
     """Main application window coordinating all UI components."""
 
     _open_worker_db = pyqtSignal(str)
-    _close_worker_db = pyqtSignal()
+    _set_active_worker_db = pyqtSignal(str)
+    _close_worker_db = pyqtSignal(str)
     _chat_set_db = pyqtSignal(str)
     _chat_set_models = pyqtSignal(str, str)
     _chat_load_history = pyqtSignal()
@@ -45,8 +46,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         """Initialize the main window, menus, UI layout, and status bar."""
         super().__init__()
-        self._db = DatabaseConnection()
+        self._databases: dict[str, DatabaseConnection] = {}
+        self._active_path: str | None = None
         self._docker_sources: dict[str, DockerVolumeInfo] = {}
+        self._schema_browsers: dict[str, SchemaBrowser] = {}
         self._fs_watcher = QFileSystemWatcher(self)
         self._fs_watcher.fileChanged.connect(self._on_db_file_changed)
         self._refresh_debounce = QTimer(self)
@@ -67,6 +70,7 @@ class MainWindow(QMainWindow):
         self._worker_thread.start()
 
         self._open_worker_db.connect(self._worker.open_database)
+        self._set_active_worker_db.connect(self._worker.set_active_database)
         self._close_worker_db.connect(self._worker.close_database)
 
         self._chat_model = self._settings.value(
@@ -100,8 +104,14 @@ class MainWindow(QMainWindow):
         self._chat_worker.history_loaded.connect(self._chat_panel.load_history)
 
         self._load_last_database()
-        if not self._db.is_connected:
+        if not self._active_path:
             QTimer.singleShot(0, lambda: self._chat_set_db.emit(""))
+
+    @property
+    def _active_db(self) -> DatabaseConnection | None:
+        if self._active_path and self._active_path in self._databases:
+            return self._databases[self._active_path]
+        return None
 
     def _setup_menu(self):
         """Construct the menu bar with File, View, and Help menus."""
@@ -114,7 +124,7 @@ class MainWindow(QMainWindow):
         self._open_action.triggered.connect(self._on_open_database)
         file_menu.addAction(self._open_action)
 
-        self._close_action = QAction("&Close Database", self)
+        self._close_action = QAction("&Close Active Database", self)
         self._close_action.setShortcut("Ctrl+W")
         self._close_action.triggered.connect(self._on_close_database)
         self._close_action.setEnabled(False)
@@ -162,15 +172,15 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _setup_ui(self):
-        """Build the central widget layout with schema browser and tab area."""
+        """Build the central widget layout with schema tabs and tab area."""
         self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.setCentralWidget(self._splitter)
 
-        self._schema_browser = SchemaBrowser()
-        self._schema_browser.table_selected.connect(self._on_table_selected)
-        self._schema_browser.view_selected.connect(self._on_view_selected)
-        self._schema_browser.er_diagram_requested.connect(self._on_er_diagram_for_table)
-        self._splitter.addWidget(self._schema_browser)
+        self._schema_tabs = QTabWidget()
+        self._schema_tabs.setTabsClosable(True)
+        self._schema_tabs.tabCloseRequested.connect(self._on_schema_tab_close)
+        self._schema_tabs.currentChanged.connect(self._on_active_db_changed)
+        self._splitter.addWidget(self._schema_tabs)
 
         self._right_tabs = QTabWidget()
         self._right_tabs.setTabsClosable(True)
@@ -271,17 +281,37 @@ class MainWindow(QMainWindow):
         files.insert(0, path)
         self._settings.setValue("recent_files", files[:RECENT_FILES_MAX])
 
+    def _add_schema_tab(self, path: str) -> SchemaBrowser:
+        browser = SchemaBrowser()
+        browser.table_selected.connect(
+            lambda name, p=path: self._on_table_selected(p, name)
+        )
+        browser.view_selected.connect(
+            lambda name, p=path: self._on_view_selected(p, name)
+        )
+        browser.er_diagram_requested.connect(
+            lambda name, p=path: self._on_er_diagram_for_table(p, name)
+        )
+        browser.set_database(self._databases[path])
+        self._schema_browsers[path] = browser
+        tab_name = pathlib.Path(path).stem
+        self._schema_tabs.addTab(browser, tab_name)
+        self._schema_tabs.setCurrentWidget(browser)
+        return browser
+
     def _connect_database(self, path: str, docker_source: tuple[str, str] | None = None) -> bool:
         try:
-            self._db.close()
-            self._db.connect(path)
-            self._start_watching(path)
+            db = DatabaseConnection()
+            db.connect(path)
+            self._databases[path] = db
+            self._active_path = path
+            self._add_schema_tab(path)
             self._open_worker_db.emit(path)
             self._chat_set_db.emit(path)
-            self._schema_browser.set_database(self._db)
             self._query_editor.set_connected(True)
             self._close_action.setEnabled(True)
             self._er_action.setEnabled(True)
+            self._start_watching(path)
             if docker_source is not None:
                 vol, rpath = docker_source
                 stat = get_volume_file_stat(vol, rpath)
@@ -296,9 +326,11 @@ class MainWindow(QMainWindow):
                 self._add_recent_file(path)
                 self._settings.setValue("last_database", path)
                 self._settings.setValue("last_docker_source", "")
-                self._status_label.setText(f"Connected: {self._db.path}")
+                self._status_label.setText(f"Connected: {path}")
             return True
         except Exception as e:
+            self._databases.pop(path, None)
+            self._schema_browsers.pop(path, None)
             QMessageBox.critical(self, "Error", f"Failed to open database:\n{e}")
             return False
 
@@ -318,15 +350,7 @@ class MainWindow(QMainWindow):
         if docker_source_raw:
             return
         try:
-            self._db.connect(path)
-            self._start_watching(path)
-            self._open_worker_db.emit(path)
-            self._chat_set_db.emit(path)
-            self._schema_browser.set_database(self._db)
-            self._query_editor.set_connected(True)
-            self._close_action.setEnabled(True)
-            self._er_action.setEnabled(True)
-            self._status_label.setText(f"Connected: {self._db.path}")
+            self._connect_database(path)
         except Exception:
             pass
 
@@ -336,18 +360,24 @@ class MainWindow(QMainWindow):
         if pathlib.Path(wal_path).exists():
             self._fs_watcher.addPath(wal_path)
 
-    def _stop_watching(self) -> None:
-        paths = list(self._fs_watcher.files())
-        if paths:
-            self._fs_watcher.removePaths(paths)
+    def _stop_watching(self, path: str | None = None) -> None:
+        if path:
+            self._fs_watcher.removePath(path)
+            wal_path = path + "-wal"
+            if pathlib.Path(wal_path).exists():
+                self._fs_watcher.removePath(wal_path)
+        else:
+            paths = list(self._fs_watcher.files())
+            if paths:
+                self._fs_watcher.removePaths(paths)
 
     def _on_db_file_changed(self, path: str) -> None:
         self._refresh_debounce.start()
 
     def _do_refresh_all(self) -> None:
-        if not self._db.is_connected:
-            return
-        self._schema_browser._refresh()
+        for path, browser in self._schema_browsers.items():
+            if self._databases.get(path) and self._databases[path].is_connected:
+                browser._refresh()
         for i in range(self._right_tabs.count()):
             w = self._right_tabs.widget(i)
             if hasattr(w, 'refresh'):
@@ -364,46 +394,97 @@ class MainWindow(QMainWindow):
                     continue
                 info.last_mtime = mtime
                 info.last_size = size
-                self._stop_watching()
-                self._db.close()
-                self._close_worker_db.emit()
+                self._stop_watching(local_path)
+                db = self._databases.get(local_path)
+                if db:
+                    db.close()
+                self._close_worker_db.emit(local_path)
                 copy_from_volume(info.volume_name, info.remote_path)
-                self._db.connect(local_path)
+                if local_path in self._databases:
+                    self._databases[local_path].connect(local_path)
                 self._start_watching(local_path)
                 self._open_worker_db.emit(local_path)
+                if self._active_path == local_path:
+                    self._set_active_worker_db.emit(local_path)
                 self._do_refresh_all()
             except DockerError as e:
                 self._status_label.setText(f"Docker poll error: {e}")
             except Exception as e:
                 self._status_label.setText(f"Poll error: {e}")
 
-    def _on_close_database(self):
-        self._stop_watching()
-        self._docker_poll_timer.stop()
-        self._maybe_sync_docker_back()
-        self._close_worker_db.emit()
+    def _on_active_db_changed(self, index: int) -> None:
+        widget = self._schema_tabs.widget(index)
+        path = None
+        for p, w in self._schema_browsers.items():
+            if w is widget:
+                path = p
+                break
+        self._active_path = path
+        if path:
+            self._set_active_worker_db.emit(path)
+            self._chat_set_db.emit(path)
+            db_label = self._docker_sources[path].volume_name if path in self._docker_sources else path
+            self._status_label.setText(f"Active: {db_label}")
+            self._close_action.setEnabled(True)
+        else:
+            self._chat_set_db.emit("")
+            self._status_label.setText("No database open")
+
+    def _close_database_by_path(self, path: str) -> None:
+        was_active = path == self._active_path
+        self._stop_watching(path)
+        self._docker_sources.pop(path, None)
+        self._close_worker_db.emit(path)
+        db = self._databases.pop(path, None)
+        if db:
+            db.close()
+        browser = self._schema_browsers.pop(path, None)
+        if browser:
+            idx = self._schema_tabs.indexOf(browser)
+            if idx >= 0:
+                self._schema_tabs.removeTab(idx)
+            browser.deleteLater()
         for i in range(self._right_tabs.count() - 1, 0, -1):
             w = self._right_tabs.widget(i)
             if w is not self._query_editor:
                 self._right_tabs.removeTab(i)
-        try:
-            self._chat_set_db.emit("")
-        except Exception:
-            pass
-        self._db.close()
-        self._schema_browser.set_database(None)
-        self._query_editor.set_connected(False)
-        self._close_action.setEnabled(False)
-        self._er_action.setEnabled(False)
-        self._status_label.setText("No database open")
+        if was_active:
+            if self._databases:
+                first_path = next(iter(self._databases))
+                self._active_path = first_path
+                self._set_active_worker_db.emit(first_path)
+                self._chat_set_db.emit(first_path)
+            else:
+                self._active_path = None
+                self._query_editor.set_connected(False)
+                self._close_action.setEnabled(False)
+                self._er_action.setEnabled(False)
+                self._status_label.setText("No database open")
+                self._chat_set_db.emit("")
+        if not self._docker_sources:
+            self._docker_poll_timer.stop()
+
+    def _on_close_database(self):
+        if self._active_path:
+            self._close_database_by_path(self._active_path)
+
+    def _on_schema_tab_close(self, index: int) -> None:
+        widget = self._schema_tabs.widget(index)
+        for path, w in self._schema_browsers.items():
+            if w is widget:
+                self._close_database_by_path(path)
+                return
 
     def _sync_docker_back(self) -> None:
-        path = self._db.path
+        path = self._active_path
         if not path or path not in self._docker_sources:
             return
         info = self._docker_sources[path]
+        db = self._active_db
+        if not db:
+            return
         try:
-            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             copy_to_volume(info.volume_name, info.remote_path, info.local_path)
         except Exception as e:
             QMessageBox.critical(
@@ -413,55 +494,61 @@ class MainWindow(QMainWindow):
             )
 
     def _maybe_sync_docker_back(self) -> None:
-        path = self._db.path
-        if not path or path not in self._docker_sources:
-            return
-        info = self._docker_sources[path]
-        reply = QMessageBox.question(
-            self, "Sync to Docker Volume",
-            f"Save changes back to Docker volume?\n\n{info.volume_name}/{info.remote_path}",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel,
-        )
-        if reply == QMessageBox.StandardButton.Cancel:
-            pass
-        elif reply == QMessageBox.StandardButton.Yes:
-            self._sync_docker_back()
-        cleanup_local(info.volume_name, info.local_path)
-        self._docker_sources.pop(path, None)
-        if not self._docker_sources:
-            self._docker_poll_timer.stop()
+        for path, info in list(self._docker_sources.items()):
+            reply = QMessageBox.question(
+                self, "Sync to Docker Volume",
+                f"Save changes back to Docker volume?\n\n{info.volume_name}/{info.remote_path}",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                pass
+            elif reply == QMessageBox.StandardButton.Yes:
+                old_path = self._active_path
+                self._active_path = path
+                self._sync_docker_back()
+                self._active_path = old_path
+            cleanup_local(info.volume_name, info.local_path)
+            self._docker_sources.pop(path, None)
+        self._docker_poll_timer.stop()
 
     def _on_edits_committed(self, table_name: str) -> None:
         self._sync_docker_back()
 
     def _on_er_diagram(self):
         from ui.er_dialog import ErDialog
-        dlg = ErDialog(self, db_conn=self._db)
-        dlg.exec()
+        db = self._active_db
+        if db:
+            dlg = ErDialog(self, db_conn=db)
+            dlg.exec()
 
-    def _on_er_diagram_for_table(self, table_name: str):
+    def _on_er_diagram_for_table(self, db_path: str, table_name: str):
         from ui.er_dialog import ErDialog
-        dlg = ErDialog(self, db_conn=self._db, table_name=table_name)
-        dlg.exec()
+        db = self._databases.get(db_path)
+        if db:
+            dlg = ErDialog(self, db_conn=db, table_name=table_name)
+            dlg.exec()
 
-    def _on_table_selected(self, table_name: str) -> None:
-        self._open_data_browser(table_name)
+    def _on_table_selected(self, db_path: str, table_name: str) -> None:
+        self._open_data_browser(db_path, table_name)
 
-    def _on_view_selected(self, view_name: str) -> None:
+    def _on_view_selected(self, db_path: str, view_name: str) -> None:
         tab = self._query_editor.add_tab()
         tab.editor.setPlainText(f"SELECT * FROM \"{view_name}\"\n")
 
-    def _open_data_browser(self, table_name: str) -> None:
+    def _open_data_browser(self, db_path: str, table_name: str) -> None:
         for i in range(self._right_tabs.count()):
             w = self._right_tabs.widget(i)
             if hasattr(w, '_table_name') and w._table_name == table_name:
                 self._right_tabs.setCurrentIndex(i)
                 return
-        columns = self._db.table_schema(table_name)
-        total_count = self._db.table_row_count(table_name)
-        ddl = self._db.table_create_sql(table_name) or ""
+        db = self._databases.get(db_path)
+        if not db:
+            return
+        columns = db.table_schema(table_name)
+        total_count = db.table_row_count(table_name)
+        ddl = db.table_create_sql(table_name) or ""
         tab = TableTab(self._worker, table_name, columns, total_count, ddl)
         idx = self._right_tabs.addTab(tab, table_name)
         self._right_tabs.setCurrentIndex(idx)
@@ -527,11 +614,13 @@ class MainWindow(QMainWindow):
         self._stop_watching()
         self._docker_poll_timer.stop()
         self._maybe_sync_docker_back()
-        self._close_worker_db.emit()
+        self._worker.close_all()
         self._worker_thread.quit()
         self._worker_thread.wait(3000)
         self._chat_close_store.emit()
         self._chat_thread.quit()
         self._chat_thread.wait(3000)
-        self._db.close()
+        for db in self._databases.values():
+            db.close()
+        self._databases.clear()
         super().closeEvent(event)

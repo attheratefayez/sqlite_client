@@ -46,7 +46,7 @@ def browser(qtbot, sample_db):
     columns = sample_db.table_schema("users")
     total_count = sample_db.table_row_count("users")
     worker = DatabaseWorker()
-    worker._db.connect(sample_db.path)
+    worker.open_database(sample_db.path)
     thread = QThread()
     worker.moveToThread(thread)
     thread.start()
@@ -56,7 +56,7 @@ def browser(qtbot, sample_db):
     yield widget
     thread.quit()
     thread.wait(3000)
-    worker.close_database()
+    worker.close_database(sample_db.path)
 
 
 class TestDataTableModel:
@@ -238,7 +238,7 @@ class TestDataBrowser:
         columns = conn.table_schema("notes")
         total_count = conn.table_row_count("notes")
         worker = DatabaseWorker()
-        worker._db.connect(conn.path)
+        worker.open_database(conn.path)
         thread = QThread()
         worker.moveToThread(thread)
         thread.start()
@@ -249,7 +249,7 @@ class TestDataBrowser:
         assert len(b._pending_edits) == 0
         thread.quit()
         thread.wait(3000)
-        worker.close_database()
+        worker.close_database(conn.path)
         conn.close()
         pathlib.Path(tmp.name).unlink(missing_ok=True)
 
@@ -300,7 +300,7 @@ class TestDatabaseWorkerAddRow:
 
     def test_request_add_row_with_defaults(self, worker, tmp_path):
         db_path = str(tmp_path / "test.db")
-        worker._db.connect(db_path)
+        worker.open_database(db_path)
         worker._db.execute_script("""
             CREATE TABLE t (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,7 +324,7 @@ class TestDatabaseWorkerAddRow:
 
     def test_request_add_row_double_insert(self, worker, tmp_path):
         db_path = str(tmp_path / "test.db")
-        worker._db.connect(db_path)
+        worker.open_database(db_path)
         worker._db.execute_script("""
             CREATE TABLE t (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
